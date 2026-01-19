@@ -1,14 +1,13 @@
 ﻿using OpenCvSharp;
 using OpenCvSharp.Extensions;
 using OpenCvSharp.WpfExtensions;
-using System;
-using System.Drawing;
+//using System;
+//using System.Drawing;
 using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
+//using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
-using System.Windows.Media.Imaging;
+//using System.Windows.Media.Imaging;
 
 namespace Pause_Everywhere
 {
@@ -22,7 +21,6 @@ namespace Pause_Everywhere
         private volatile bool _precomputeRunning = true;
         private volatile bool _isProcessingHotkey = false;
         private volatile bool _needsRecalculation = true;
-        private volatile string _lastAction = "未开始"; // 调试信息
 
         const int HOTKEY_ID = 1;
         const uint MOD_CONTROL = 0x0002;
@@ -36,17 +34,12 @@ namespace Pause_Everywhere
         private const int SKIP_FRAMES = 5; // 跳过更多帧
 
         private int _frameCounter = 0;
-        private int _reuseCount = 0; // 重用计数
-        private int _recalcCount = 0; // 重计算计数
 
         [DllImport("user32.dll")]
         static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
         [DllImport("user32.dll")]
         static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-
-        // 性能计时
-        private System.Diagnostics.Stopwatch _sw = new System.Diagnostics.Stopwatch();
 
         public MainWindow()
         {
@@ -99,8 +92,6 @@ namespace Pause_Everywhere
                             continue;
                         }
 
-                        _sw.Restart();
-
                         // 获取当前窗口所在的屏幕
                         var handle = new WindowInteropHelper(this).Handle;
                         var screen = System.Windows.Forms.Screen.FromHandle(handle);
@@ -116,10 +107,6 @@ namespace Pause_Everywhere
 
                         if (needsBlur)
                         {
-                            _lastAction = "重新计算模糊";
-                            _recalcCount++;
-                            System.Diagnostics.Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] {_lastAction} (重计算次数: {_recalcCount})");
-
                             // 使用更高效的捕获方法
                             using (var mat = CaptureAndProcessScreen_Perf(bounds))
                             {
@@ -134,15 +121,6 @@ namespace Pause_Everywhere
                             _previousScreenHash = currentHash;
                             _needsRecalculation = false;
                         }
-                        else
-                        {
-                            _lastAction = "重用上次模糊";
-                            _reuseCount++;
-                            System.Diagnostics.Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] {_lastAction} (重用次数: {_reuseCount}, 总重计算: {_recalcCount})");
-                        }
-
-                        _sw.Stop();
-                        System.Diagnostics.Debug.WriteLine($"处理耗时: {_sw.ElapsedMilliseconds}ms");
 
                         // 如果窗口可见，立即更新显示
                         if (this.Dispatcher.Invoke(() => this.Visibility == Visibility.Visible))
@@ -152,9 +130,8 @@ namespace Pause_Everywhere
 
                         await Task.Delay(50);
                     }
-                    catch (Exception ex)
+                    catch (Exception)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[错误] 预计算: {ex.Message}");
                         await Task.Delay(100);
                     }
                 }
@@ -164,29 +141,7 @@ namespace Pause_Everywhere
         // 计算感知哈希（非常轻量）
         private byte[] CalculatePerceptualHash(System.Drawing.Rectangle bounds)
         {
-            //// 方法1：超级轻量的哈希 - 仅捕获几个关键点
-            //int sampleCount = 16; // 只采样16个点
-            //byte[] hash = new byte[sampleCount];
-
-            //using (var bmp = new Bitmap(sampleCount, 1)) // 最小的Bitmap
-            //using (var g = Graphics.FromImage(bmp))
-            //{
-            //    // 在屏幕的不同位置采样
-            //    Random rand = new Random(42); // 固定种子，确保采样点一致
-            //    for (int i = 0; i < sampleCount; i++)
-            //    {
-            //        int x = bounds.X + rand.Next(bounds.Width);
-            //        int y = bounds.Y + rand.Next(bounds.Height);
-
-            //        // 使用CopyFromScreen只复制一个像素
-            //        g.CopyFromScreen(x, y, i, 0, new System.Drawing.Size(1, 1));
-            //    }
-
-            //    // 简化：这里实际上我们只需要知道颜色是否变化
-            //    // 更简单的方法：直接使用屏幕中心区域的平均颜色
-            //}
-
-            // 方法2：更简单有效的哈希 - 使用屏幕缩略图
+            // 更简单有效的哈希 - 使用屏幕缩略图
             using (var thumbnail = CaptureTinyThumbnail(bounds, 4, 4)) // 4x4像素
             {
                 // 转换为灰度并计算平均值
@@ -246,26 +201,6 @@ namespace Pause_Everywhere
             return diff;
         }
 
-        // 方法3：最简单的变化检测 - 只检查屏幕中心点
-        private bool IsScreenCenterChanged(System.Drawing.Rectangle bounds)
-        {
-            using (var bmp = new Bitmap(1, 1))
-            using (var g = Graphics.FromImage(bmp))
-            {
-                // 捕获屏幕中心的一个像素
-                int centerX = bounds.X + bounds.Width / 2;
-                int centerY = bounds.Y + bounds.Height / 2;
-                g.CopyFromScreen(centerX, centerY, 0, 0, new System.Drawing.Size(1, 1));
-
-                var color = bmp.GetPixel(0, 0);
-                int brightness = (color.R + color.G + color.B) / 3;
-
-                // 这里需要保存上一次的亮度值进行比较
-                // 简化：总是返回true，让模糊逻辑自己判断
-                return false;
-            }
-        }
-
         // 高性能版本的屏幕捕获和处理
         private Mat CaptureAndProcessScreen_Perf(System.Drawing.Rectangle bounds)
         {
@@ -321,9 +256,9 @@ namespace Pause_Everywhere
                         }
                     }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    System.Diagnostics.Debug.WriteLine($"更新图像错误: {ex.Message}");
+                    // 静默处理异常
                 }
             });
         }
@@ -341,12 +276,6 @@ namespace Pause_Everywhere
             {
                 _isProcessingHotkey = true;
                 _needsRecalculation = true;
-
-                // 重置计数器用于调试
-                _reuseCount = 0;
-                _recalcCount = 0;
-
-                System.Diagnostics.Debug.WriteLine("=== 热键触发 ===");
 
                 if (this.Visibility != Visibility.Visible)
                 {
@@ -371,12 +300,11 @@ namespace Pause_Everywhere
 
                                 // 计算并保存哈希
                                 _previousScreenHash = CalculatePerceptualHash(bounds);
-                                System.Diagnostics.Debug.WriteLine("首次计算哈希完成");
                             }
                         }
-                        catch (Exception ex)
+                        catch (Exception)
                         {
-                            System.Diagnostics.Debug.WriteLine($"热键捕获错误: {ex.Message}");
+                            // 静默处理异常
                         }
                     });
                 }
@@ -414,10 +342,6 @@ namespace Pause_Everywhere
                 _preparedMat?.Dispose();
                 _preparedMat = null;
             }
-
-            System.Diagnostics.Debug.WriteLine($"=== 程序结束 ===");
-            System.Diagnostics.Debug.WriteLine($"总重计算次数: {_recalcCount}");
-            System.Diagnostics.Debug.WriteLine($"总重用次数: {_reuseCount}");
 
             base.OnClosed(e);
         }
