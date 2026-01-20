@@ -12,6 +12,8 @@ namespace Pause_Everywhere
 {
     public partial class MainWindow : System.Windows.Window
     {
+
+        // ===== 预计算模糊图像相关 =====
         private Mat _preparedMat = new Mat();// 预计算好的模糊图像（OpenCV矩阵）
         private byte[]? _previousScreenHash = null;// 上一帧的屏幕哈希值（用于变化检测）
         private readonly object _frameLock = new();// 线程锁，保护_preparedMat的访问
@@ -20,17 +22,43 @@ namespace Pause_Everywhere
         private volatile bool _isProcessingHotkey = false;// 防止热键重复处理
         private volatile bool _needsRecalculation = true;// 标记需要重新计算模糊
         private Rectangle _screenBounds; // 屏幕区域的缓存
+        // ===== 预计算模糊图像相关 =====
 
+
+
+        //===== 热键注册相关 =====
         const int HOTKEY_ID = 1;// 热键ID
         const uint MOD_CONTROL = 0x0002;// Ctrl键
         const uint MOD_ALT = 0x0001;// Alt键
         const uint VK_P = 0x50;// P键
+        //===== 热键注册相关 =====
 
+
+
+
+        // ===== 屏幕捕获与处理相关 =====
         private const double SCALE_FACTOR = 0.1;// 缩放因子（缩小10倍处理）
         private const int CHANGE_THRESHOLD = 2;// 哈希差异阈值（>2视为屏幕变化）
         private const int SKIP_FRAMES = 5;// 跳帧数，降低CPU使用率
 
         private int _frameCounter = 0;
+        // ===== 屏幕捕获与处理相关 =====
+
+
+
+        // ===== 屏幕变化检测（低分辨率差分） =====
+        const int DIFF_W = 64;
+        const int DIFF_H = 36;
+
+        // 上一帧灰度
+        private byte[]? _prevGray = null;
+        private bool _hasPrevGray = false;
+
+        // 差分能量阈值（核心参数）
+        private const int DIFF_ENERGY_THRESHOLD = 8000;
+
+        // ===== 屏幕变化检测（低分辨率差分） =====
+
 
         [DllImport("user32.dll")]
         static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -78,8 +106,6 @@ namespace Pause_Everywhere
             {
                 while (_precomputeRunning)
                 {
-                    int iteration = 0;
-                    //Debug.WriteLine($"=== 后台任务循环 #{iteration} ===");
                     try
                     {
                         // 跳帧处理，降低CPU使用率
@@ -100,123 +126,104 @@ namespace Pause_Everywhere
                             continue;
                         }
 
-                        Debug.WriteLine("开始计算...");
+                        //Debug.WriteLine("开始计算...");
 
                         var bounds = _screenBounds;
-
-                        Debug.WriteLine("Calculating current screen hash...");
-                        // 计算当前屏幕的感知哈希值
-                        byte[] currentHash = CalculatePerceptualHash(bounds);
-
-
-                        // 判断是否需要重新计算模糊图像
                         /*
-                         * 条件（或）：
-                         * 1.首次计算（_previousScreenHash为null）
-                         * 2.标记需要重新计算（_needsRecalculation为true）
-                         * 3.屏幕变化显著（哈希差异大于阈值）
+                         * 判断是否需要重新计算模糊图像
+                         * 条件1：标记需要重新计算
+                         * 条件2：屏幕变化检测（低分辨率差分法）
                          */
-                        Debug.WriteLine("开始计算...");
-                        bool needsBlur =
-                            _needsRecalculation ||
-                            _previousScreenHash == null ||
-                            CalculateHashDifference(currentHash, _previousScreenHash) > CHANGE_THRESHOLD;
+                        //Debug.WriteLine("开始计算...");
+                        bool needsBlur = _needsRecalculation || IsScreenChangedLowRes(bounds);
+
 
                         // 如果需要，捕获屏幕并计算模糊图像
                         if (needsBlur)
                         {
-                            Debug.WriteLine("Recalculating blurred background...");
                             using var mat = CaptureAndProcessScreen(bounds);
                             lock (_frameLock)
                             {
                                 _preparedMat?.Dispose();
-                                _preparedMat = mat.Clone();// 深拷贝模糊图像
+                                _preparedMat = mat.Clone();
                             }
-
-                            _previousScreenHash = currentHash;
                             _needsRecalculation = false;
                         }
                         else
                         {
-                            Debug.WriteLine("No significant change detected, skipping recalculation.");
+                            Debug.WriteLine("======最终结果：复用图像======");
                         }
 
                         await Task.Delay(100);
                     }
                     catch
                     {
+                        Debug.WriteLine("预计算过程中出现异常，继续下一次循环");
                         await Task.Delay(100);
                     }
                 }
             });
         }
 
-        // 计算屏幕区域的感知哈希值
-        private byte[] CalculatePerceptualHash(Rectangle bounds)
+        // 使用低分辨率差分法检测屏幕变化
+        private bool IsScreenChangedLowRes(Rectangle bounds)
         {
-            // 使用4x4像素的缩略图计算感知哈希
-            const int W = 4;
-            const int H = 4;
+            // 1. 捕获整屏
+            using var fullBmp = new Bitmap(
+                bounds.Width,
+                bounds.Height,
+                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
 
-
-            Debug.WriteLine("Capturing screen for perceptual hash...");
-            // 捕获屏幕区域到Bitmap
-            using var bmp = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-            using (var g = Graphics.FromImage(bmp))
+            using (var g = Graphics.FromImage(fullBmp))
             {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
-                g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, new System.Drawing.Size(W, H));
+                g.CopyFromScreen(
+                    bounds.X, bounds.Y,
+                    0, 0,
+                    bounds.Size,
+                    CopyPixelOperation.SourceCopy);
             }
 
-            //Debug.WriteLine("Calculating perceptual hash...");
+            // 2. 缩放到低分辨率
+            using var smallBmp = new Bitmap(
+                DIFF_W, DIFF_H,
+                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
 
-            // 计算灰度值并求平均
-            int[] gray = new int[W * H];
-            int sum = 0;
+            using (var g2 = Graphics.FromImage(smallBmp))
+            {
+                g2.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
+                g2.DrawImage(
+                    fullBmp,
+                    new Rectangle(0, 0, DIFF_W, DIFF_H));
+            }
+
+            // 3. 灰度 + 差分能量
+            var currGray = new byte[DIFF_W * DIFF_H];
+            int energy = 0;
             int idx = 0;
 
-            for (int y = 0; y < H; y++)
+            for (int y = 0; y < DIFF_H; y++)
             {
-                for (int x = 0; x < W; x++)
+                for (int x = 0; x < DIFF_W; x++)
                 {
-                    var p = bmp.GetPixel(x, y);
-                    int gval = (p.R + p.G + p.B) / 3;
-                    gray[idx++] = gval;
-                    sum += gval;
+                    var p = smallBmp.GetPixel(x, y);
+                    byte gval = (byte)((p.R + p.G + p.B) / 3);
+                    currGray[idx] = gval;
+
+                    if (_hasPrevGray)
+                    {
+                        energy += Math.Abs(gval - _prevGray![idx]);
+                    }
+
+                    idx++;
                 }
             }
 
+            _prevGray = currGray;
+            _hasPrevGray = true;
 
-            // 计算平均灰度值并生成哈希
-            int avg = sum / gray.Length;
-            ushort hash = 0;
+            Debug.WriteLine($"低分辨率差分能量: {energy}");
 
-            // 生成16位哈希值
-            for (int i = 0; i < gray.Length; i++)
-            {
-                if (gray[i] >= avg)
-                    hash |= (ushort)(1 << i);
-            }
-
-            // 返回哈希值的字节数组
-            Debug.WriteLine($"Calculated hash: {hash:X4}");
-            return BitConverter.GetBytes(hash);
-        }
-
-        // 计算两个哈希值的差异
-        private int CalculateHashDifference(byte[] h1, byte[] h2)
-        {
-            // 哈希值长度不同，视为最大差异
-            if (h1 == null || h2 == null || h1.Length != h2.Length)
-                return int.MaxValue;
-
-            // 计算绝对差异总和
-            int diff = 0;
-            for (int i = 0; i < h1.Length; i++)
-                diff += Math.Abs(h1[i] - h2[i]);
-
-            // 返回差异值
-            return diff;
+            return energy > DIFF_ENERGY_THRESHOLD;
         }
 
         // 捕获屏幕并处理图像
