@@ -12,7 +12,6 @@ namespace Pause_Everywhere
 {
     public partial class MainWindow : System.Windows.Window
     {
-
         // ===== 预计算模糊图像相关 =====
         private Mat _preparedMat = new Mat();// 预计算好的模糊图像（OpenCV矩阵）
         private byte[]? _previousScreenHash = null;// 上一帧的屏幕哈希值（用于变化检测）
@@ -79,7 +78,7 @@ namespace Pause_Everywhere
         // 窗口加载完成事件处理
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            Debug.WriteLine("开始运行预渲染");
+            Debug.WriteLine("开始运行预渲染主函数");
             StartBackgroundPrecompute();
         }
 
@@ -99,7 +98,12 @@ namespace Pause_Everywhere
             source.AddHook(WndProc);
         }
 
-        // 启动后台预计算任务
+        /// <summary>
+        /// 预计算任务主函数
+        /// </summary>
+        /// <remarks>启动异步循环，监控屏幕变化和程序状态，判定是否预计算。
+        /// 该后台任务通过跳帧来降低 CPU 使用率，并在应用程序处理热键或窗口可见时避免重新计算。此方法应在内部调用，
+        /// 用于管理预计算任务的生命周期。</remarks>
         private void StartBackgroundPrecompute()
         {
             _precomputeTask = Task.Run(async () =>
@@ -147,6 +151,7 @@ namespace Pause_Everywhere
                                 _preparedMat?.Dispose();
                                 _preparedMat = mat.Clone();
                             }
+                            Debug.WriteLine("======最终结果：重新渲染======");
                             _needsRecalculation = false;
                         }
                         else
@@ -166,6 +171,13 @@ namespace Pause_Everywhere
         }
 
         // 使用低分辨率差分法检测屏幕变化
+        /// <summary>
+        /// 低分辨率差分法
+        /// </summary>
+        /// <remarks>此方法通过将指定区域缩放到低分辨率并计算灰度值差异，将当前屏幕内容与前一帧进行比较。
+        /// 针对显著变化优化，可以通过更改差分能量阈值<see cref="DIFF_ENERGY_THRESHOLD"/>来修改</remarks>
+        /// <param name="bounds">目标屏幕区域，以屏幕坐标系中的矩形指定。</param>
+        /// <returns>指定边界内是否发生显著变化</returns>
         private bool IsScreenChangedLowRes(Rectangle bounds)
         {
             // 1. 捕获整屏
@@ -226,11 +238,18 @@ namespace Pause_Everywhere
             return energy > DIFF_ENERGY_THRESHOLD;
         }
 
-        // 捕获屏幕并处理图像
+
+        /// <summary>
+        /// 捕获并处理指定屏幕区域的图像
+        /// </summary>
+        /// <remarks>
+        /// 图像处理包括调整大小、高斯模糊和恢复原尺寸，用于降噪或减少细节。
+        /// 调用方负责在使用完毕后释放返回的<see cref="Mat"/>对象。
+        /// </remarks>
+        /// <param name="bounds">要捕获的屏幕区域（屏幕坐标系）。</param>
+        /// <returns>处理后的图像<see cref="Mat"/>对象。</returns>
         private Mat CaptureAndProcessScreen(Rectangle bounds)
         {
-            //const double SCALE_FACTOR = 0.25; // 示例缩放因子
-
             int w = bounds.Width;
             int h = bounds.Height;
 
@@ -254,65 +273,28 @@ namespace Pause_Everywhere
 
             return result;
         }
-        //const int WM_HOTKEY = 0x0312; // 热键消息
-        //// 窗口消息处理函数，处理热键事件
-        //private IntPtr WndProc(
-        //    IntPtr hwnd,
-        //    int msg,
-        //    IntPtr wParam,
-        //    IntPtr lParam,
-        //    ref bool handled)
-        //{
 
-
-        //    if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID)
-        //    {
-        //        _isProcessingHotkey = true; // 标记正在处理热键,防止重复触发
-        //        _needsRecalculation = true; // 标记需要重新计算模糊图像
-
-        //        Dispatcher.Invoke(() =>
-        //        {
-        //            if (Visibility != Visibility.Visible)
-        //            {
-        //                // 显示窗口并更新背景图像
-        //                Visibility = Visibility.Visible;
-        //                Activate();
-
-        //                // 获取当前屏幕区域
-        //                var handle = new WindowInteropHelper(this).Handle;
-        //                var screen = System.Windows.Forms.Screen.FromHandle(handle);
-        //                var bounds = screen.Bounds;
-
-        //                // 捕获屏幕并更新背景图像
-        //                using var mat = CaptureAndProcessScreen(bounds);
-
-
-        //                var src = mat.ToBitmapSource(); // 转换为WPF图像
-        //                src.Freeze(); // 冻结以跨线程使用
-        //                BackImage.Source = src;
-
-        //                _previousScreenHash = CalculatePerceptualHash(bounds);
-        //            }
-        //            else
-        //            {
-        //                Visibility = Visibility.Hidden;
-        //            }
-        //        });
-
-        //        Task.Delay(300).ContinueWith(_ => _isProcessingHotkey = false);
-        //        handled = true;
-        //    }
-
-        //    return IntPtr.Zero;
-        //}
-
+        /// <summary>
+        /// 窗口消息处理主函数，主要处理热键消息以控制窗口显示和更新背景
+        /// </summary>
+        /// <remarks>
+        /// 此方法负责处理Windows消息循环中的WM_HOTKEY热键信息，
+        /// 当检测到指定热键被按下时，会切换窗口的显示状态
+        /// 消息处理后会将handled标志设为true，表示消息已被处理，不需要进一步传递。
+        /// </remarks>
+        /// <param name="hwnd">当前窗口的句柄</param>
+        /// <param name="msg">Windows消息标识符</param>
+        /// <param name="wParam">消息参数，对于热键消息表示热键ID</param>
+        /// <param name="lParam">消息参数，内容取决于消息类型</param>
+        /// <param name="handled">输出参数，指示消息是否已被处理</param>
+        /// <returns>消息处理结果，此方法始终返回IntPtr.Zero</returns>
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             const int WM_HOTKEY = 0x0312; // 热键消息
             if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID)
             {
                 _isProcessingHotkey = true;
-                _needsRecalculation = true; // 标记需要重新计算模糊图像
+                //_needsRecalculation = true; // 标记需要重新计算模糊图像
 
                 Dispatcher.Invoke(() =>
                 {
@@ -340,21 +322,18 @@ namespace Pause_Everywhere
                             src.Freeze();
                             BackImage.Source = src;// 设置背景图像
                         }
-                        
-                        //else
-                        //{
-                        //    // 否则实时计算（后备方案）
-                        //    var handle = new WindowInteropHelper(this).Handle;
-                        //    var screen = System.Windows.Forms.Screen.FromHandle(handle);
-                        //    var bounds = screen.Bounds;
-                        //    using var mat = CaptureAndProcessScreen(bounds);
-                        //    src = mat.ToBitmapSource();
-                        //    src.Freeze();
-                        //    BackImage.Source = src;
-                        //}
 
-                        // 标记需要更新（为下次显示做准备）
-                        //_needsRecalculation = true;
+                        else
+                        {
+                            // 否则实时计算（后备方案）
+                            var handle = new WindowInteropHelper(this).Handle;
+                            var screen = System.Windows.Forms.Screen.FromHandle(handle);
+                            var bounds = screen.Bounds;
+                            using var mat = CaptureAndProcessScreen(bounds);
+                            src = mat.ToBitmapSource();
+                            src.Freeze();
+                            BackImage.Source = src;
+                        }
                     }
                     else
                     {
@@ -367,7 +346,14 @@ namespace Pause_Everywhere
             }
             return IntPtr.Zero;
         }
-        // 窗口关闭时的清理工作
+        /// <summary>
+        /// 窗口关闭时执行清理操作
+        /// </summary>
+        /// <remarks>
+        /// 此方法在窗口关闭时释放资源、注销热键并清理预计算数据。
+        /// 作为窗口关闭流程的一部分被调用，确保资源正确释放。
+        /// </remarks>
+        /// <param name="e">包含事件数据的<see cref="EventArgs"/>对象</param>
         protected override void OnClosed(EventArgs e)
         {
             _precomputeRunning = false;
