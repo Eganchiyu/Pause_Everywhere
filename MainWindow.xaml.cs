@@ -58,6 +58,11 @@ namespace Pause_Everywhere
 
         // ===== 屏幕变化检测（低分辨率差分） =====
 
+        // ===== 亮度判断参数 =====
+        private const double BRIGHTNESS_THRESHOLD = 180; // 0~255，越大越“亮”
+        private const double DIM_OPACITY = 0.25;          // 变暗强度
+        private volatile bool _needDim = false;           // 是否需要变暗
+        // ===== 亮度判断参数 =====
 
         [DllImport("user32.dll")]
         static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -261,6 +266,19 @@ namespace Pause_Everywhere
             // 转换为Mat
             using var full = OpenCvSharp.Extensions.BitmapConverter.ToMat(bmp);
 
+            // 转灰度
+            using var gray = new Mat();
+            Cv2.CvtColor(full, gray, ColorConversionCodes.BGR2GRAY);
+
+            // 计算平均亮度
+            var meanScalar = Cv2.Mean(gray);
+            double avgBrightness = meanScalar.Val0;
+
+            // 更新是否需要变暗
+            _needDim = avgBrightness > BRIGHTNESS_THRESHOLD;
+
+            Debug.WriteLine($"平均亮度: {avgBrightness}, 需要变暗: {_needDim}");
+
             // 计算缩放尺寸
             int smallW = (int)(w * SCALE_FACTOR);
             int smallH = (int)(h * SCALE_FACTOR);
@@ -300,6 +318,11 @@ namespace Pause_Everywhere
                 {
                     if (Visibility != Visibility.Visible)
                     {
+                        if (_needDim)
+                            DimLayer.Opacity = DIM_OPACITY;
+                        else
+                            DimLayer.Opacity = 0.0;
+
                         // 立即显示窗口
                         Visibility = Visibility.Visible;
                         Activate();
