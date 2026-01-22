@@ -8,14 +8,10 @@ namespace Pause_Everywhere
         #region 参数和状态变量
         // ===== 预计算模糊图像相关 =====
         public static Mat _preparedMat = new Mat();// 预计算好的模糊图像（OpenCV矩阵）
-        private byte[]? _previousScreenHash = null;// 上一帧的屏幕哈希值（用于变化检测）
         public static readonly object _frameLock = new();// 线程锁，保护_preparedMat的访问
         public static Task? _precomputeTask;// 后台预计算任务
-        
-        
         private static volatile bool _needsRecalculation = true;// 标记需要重新计算模糊
-
-        private const int SKIP_FRAMES = 5;// 跳帧数，降低CPU使用率
+        private const int SKIP_FRAMES = 7;// 跳帧数，降低CPU使用率
         private static int _frameCounter = 0;
         // ===== 预计算模糊图像相关 =====
         #endregion、
@@ -33,7 +29,7 @@ namespace Pause_Everywhere
                     try
                     {
                         // 如果正在处理热键或窗口可见，跳过本次计算
-                        if (Main._isProcessingHotkey || Main.WindowIsVisible)
+                        if (Main._isProcessingHotkey || !Main.WindowIsVisible)
                         {
                             await Task.Delay(200);
                             continue;

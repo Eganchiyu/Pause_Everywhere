@@ -1,6 +1,4 @@
-﻿using Microsoft.VisualBasic;
-using OpenCvSharp;
-using OpenCvSharp.Extensions;
+﻿using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -30,6 +28,8 @@ namespace Pause_Everywhere
         // ===== 预计算模糊图像相关 =====
         public static volatile bool _precomputeRunning = true;// 控制后台任务运行
         public static volatile bool WindowIsVisible = false;
+        // 差分能量阈值（核心参数）
+        public const int DIFF_ENERGY_THRESHOLD = 20000;
         // ===== 预计算模糊图像相关 =====
 
 
@@ -63,8 +63,9 @@ namespace Pause_Everywhere
             BGPreCompute.StartBackgroundPrecompute();
         }
 
+        // 
 
-        // 注册热键
+        #region 初始化 热键注册和获取屏幕区域 添加窗口消息钩子
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
@@ -74,21 +75,12 @@ namespace Pause_Everywhere
 
             // 获取屏幕区域的初始值的缓存
             var screen = Screen.FromHandle(handle);
-            _screenBounds = screen.Bounds;
+            _screenBounds = screen.Bounds; 
 
             HwndSource source = HwndSource.FromHwnd(handle);
             source.AddHook(WndProc);
         }
-
-        /// <summary>
-        /// 处理图像：包括调整大小、高斯模糊和恢复原尺寸，用于降噪或减少细节
-        /// </summary>
-        /// <remarks>
-        /// 此方法还会根据图像亮度更新是否需要变暗的标志(_needDim)
-        /// 调用方负责在使用完毕后释放返回的<see cref="Mat"/>对象。
-        /// </remarks>
-        /// <param name="input">输入的原始图像。</param>
-        /// <returns>处理后的图像<see cref="Mat"/>对象。</returns>
+        #endregion
 
 
         /// <summary>
@@ -115,8 +107,9 @@ namespace Pause_Everywhere
 
                 Dispatcher.Invoke(() =>
                 {
-                    WindowIsVisible = IsVisible;
-                    if (WindowIsVisible)
+                    WindowIsVisible = Visibility == Visibility.Visible;
+                    Debug.WriteLine($"热键触发，当前窗口可见状态：{WindowIsVisible}");
+                    if (!WindowIsVisible)
                     {
                         if (_needDim)
                             DimLayer.Opacity = DIM_OPACITY;
@@ -160,6 +153,7 @@ namespace Pause_Everywhere
                     }
                     else
                     {
+                        Debug.WriteLine("隐藏窗口");
                         Visibility = Visibility.Hidden;
                     }
                 });
@@ -170,13 +164,12 @@ namespace Pause_Everywhere
             return IntPtr.Zero;
         }
 
-
+        #region 窗口关闭清理操作
         /// <summary>
         /// 窗口关闭时执行清理操作
         /// </summary>
         /// <remarks>
-        /// 此方法在窗口关闭时释放资源、注销热键并清理预计算数据。
-        /// 作为窗口关闭流程的一部分被调用，确保资源正确释放。
+        /// 窗口关闭时释放资源、注销热键并清理预计算数据
         /// </remarks>
         /// <param name="e">包含事件数据的<see cref="EventArgs"/>对象</param>
         protected override void OnClosed(EventArgs e)
@@ -196,5 +189,6 @@ namespace Pause_Everywhere
 
             base.OnClosed(e);
         }
+        #endregion
     }
 }

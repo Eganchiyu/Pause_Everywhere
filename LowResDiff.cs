@@ -14,8 +14,7 @@ namespace Pause_Everywhere
         private static byte[]? _prevGray = null;
         private static bool _hasPrevGray = false;
 
-        // 差分能量阈值（核心参数）
-        private const int DIFF_ENERGY_THRESHOLD = 8000;
+        
 
         // ===== 屏幕变化检测（低分辨率差分） =====
         #endregion
@@ -85,7 +84,7 @@ namespace Pause_Everywhere
 
             Debug.WriteLine($"低分辨率差分能量: {energy}");
 
-            return energy > DIFF_ENERGY_THRESHOLD;
+            return energy > Main.DIFF_ENERGY_THRESHOLD;
         }
         #endregion
     }
