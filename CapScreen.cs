@@ -6,6 +6,7 @@ namespace Pause_Everywhere
 {
     public class CapScreen
     {
+        #region 捕获屏幕区域的方法 传入bounds，返回Mat
         /// <summary>
         /// 捕获并处理指定屏幕区域的图像
         /// </summary>
@@ -20,7 +21,7 @@ namespace Pause_Everywhere
         /// </summary>
         /// <param name="bounds">要捕获的屏幕区域（屏幕坐标系）。</param>
         /// <returns>捕获的屏幕图像<see cref="Mat"/>对象，调用方负责释放。</returns>
-        public Mat CaptureScreen(Rectangle bounds)
+        public static Mat Capture(Rectangle bounds)
         {
             int w = bounds.Width;
             int h = bounds.Height;
@@ -33,5 +34,6 @@ namespace Pause_Everywhere
             // 转换为Mat并返回
             return OpenCvSharp.Extensions.BitmapConverter.ToMat(bmp);
         }
+        #endregion
     }
 }

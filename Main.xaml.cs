@@ -14,7 +14,10 @@ namespace Pause_Everywhere
     public partial class Main : System.Windows.Window
     {
 
-
+        // ===== 亮度判断参数 =====
+        public const double DIM_OPACITY = 0.25;          // 变暗强度
+        public static volatile bool _needDim = false;           // 是否需要变暗
+        // ===== 亮度判断参数 =====
 
 
         //===== 热键注册相关 =====
@@ -26,23 +29,16 @@ namespace Pause_Everywhere
 
         // ===== 预计算模糊图像相关 =====
         public static volatile bool _precomputeRunning = true;// 控制后台任务运行
-        public static volatile bool IsVisible = false;
+        public static volatile bool WindowIsVisible = false;
         // ===== 预计算模糊图像相关 =====
 
-        // ===== 屏幕捕获与处理相关 =====
-        private const double SCALE_FACTOR = 0.1;// 缩放因子（缩小10倍处理）
-        private const int CHANGE_THRESHOLD = 2;// 哈希差异阈值（>2视为屏幕变化）
-        // ===== 屏幕捕获与处理相关 =====
+
 
         public static Rectangle _screenBounds; // 屏幕区域的缓存
         public static volatile bool _isProcessingHotkey = false;// 防止热键重复处理
 
 
-        // ===== 亮度判断参数 =====
-        private const double BRIGHTNESS_THRESHOLD = 180; // 0~255，越大越“亮”
-        private const double DIM_OPACITY = 0.25;          // 变暗强度
-        private volatile bool _needDim = false;           // 是否需要变暗
-        // ===== 亮度判断参数 =====
+
 
         [DllImport("user32.dll")]
         static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -51,7 +47,7 @@ namespace Pause_Everywhere
         static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
         //初始化阶段
-        public MainWindow()
+        public Main()
         {
             System.Media.SystemSounds.Beep.Play();
             Debug.WriteLine("初始化窗口");
@@ -93,46 +89,7 @@ namespace Pause_Everywhere
         /// </remarks>
         /// <param name="input">输入的原始图像。</param>
         /// <returns>处理后的图像<see cref="Mat"/>对象。</returns>
-        private Mat ProcessImage(Mat input)
-        {
-            // 转灰度计算平均亮度
-            using var gray = new Mat();
-            Cv2.CvtColor(input, gray, ColorConversionCodes.BGR2GRAY);
 
-            // 计算平均亮度
-            var meanScalar = Cv2.Mean(gray);
-            double avgBrightness = meanScalar.Val0;
-
-            // 更新是否需要变暗
-            _needDim = avgBrightness > BRIGHTNESS_THRESHOLD;
-
-            Debug.WriteLine($"平均亮度: {avgBrightness}, 需要变暗: {_needDim}");
-
-            // 获取原始尺寸
-            int w = input.Width;
-            int h = input.Height;
-
-            // 计算缩放尺寸
-            int smallW = (int)(w * SCALE_FACTOR);
-            int smallH = (int)(h * SCALE_FACTOR);
-
-            // 处理图像
-            var result = new Mat();
-            Cv2.Resize(input, result, new OpenCvSharp.Size(smallW, smallH));
-            Cv2.GaussianBlur(result, result, new OpenCvSharp.Size(0, 0), 15);
-            Cv2.Resize(result, result, new OpenCvSharp.Size(w, h));
-
-            return result;
-        }
-
-        /// <summary>
-        /// 捕获并处理指定屏幕区域的图像（原函数，兼容旧代码）
-        /// </summary>
-        private Mat CaptureAndProcessScreen(Rectangle bounds)
-        {
-            using var screenMat = CapScreen.CaptureScreen(bounds);
-            return ProcessImage(screenMat);
-        }
 
         /// <summary>
         /// 窗口消息处理主函数，主要处理热键消息以控制窗口显示和更新背景
@@ -158,8 +115,8 @@ namespace Pause_Everywhere
 
                 Dispatcher.Invoke(() =>
                 {
-                    IsVisible = Visibility == Visibility.Visible;
-                    if (IsVisible)
+                    WindowIsVisible = IsVisible;
+                    if (WindowIsVisible)
                     {
                         if (_needDim)
                             DimLayer.Opacity = DIM_OPACITY;
@@ -174,11 +131,11 @@ namespace Pause_Everywhere
                         BitmapSource? src = null;
 
                         // 读取预计算图像时加锁,防止数据竞争
-                        lock (_frameLock)
+                        lock (BGPreCompute._frameLock)
                         {
-                            if (!_preparedMat.Empty())// 检查预计算图像是否有效
+                            if (!BGPreCompute._preparedMat.Empty())// 检查预计算图像是否有效
                             {
-                                src = _preparedMat.ToBitmapSource(); // 转换为WPF图像
+                                src = BGPreCompute._preparedMat.ToBitmapSource(); // 转换为WPF图像
                             }
                         }
 
@@ -195,7 +152,7 @@ namespace Pause_Everywhere
                             var handle = new WindowInteropHelper(this).Handle;
                             var screen = System.Windows.Forms.Screen.FromHandle(handle);
                             var bounds = screen.Bounds;
-                            using var mat = CaptureAndProcessScreen(bounds);
+                            using var mat = Gaussian_processor.Process(CapScreen.Capture(bounds));
                             src = mat.ToBitmapSource();
                             src.Freeze();
                             BackImage.Source = src;
@@ -212,6 +169,8 @@ namespace Pause_Everywhere
             }
             return IntPtr.Zero;
         }
+
+
         /// <summary>
         /// 窗口关闭时执行清理操作
         /// </summary>
@@ -224,15 +183,15 @@ namespace Pause_Everywhere
         {
             _precomputeRunning = false;
 
-            try { _precomputeTask?.Wait(500); } catch { }
+            try { BGPreCompute._precomputeTask?.Wait(500); } catch { }
 
             var handle = new WindowInteropHelper(this).Handle;
             UnregisterHotKey(handle, HOTKEY_ID);
 
-            lock (_frameLock)
+            lock (BGPreCompute._frameLock)
             {
-                _preparedMat?.Dispose();
-                _preparedMat = new Mat();
+                BGPreCompute._preparedMat?.Dispose();
+                BGPreCompute._preparedMat = new Mat();
             }
 
             base.OnClosed(e);

@@ -1,10 +1,11 @@
-﻿// 使用低分辨率差分法检测屏幕变化
+﻿//使用低分辨率差分法检测屏幕变化
 using System.Diagnostics;
 
 namespace Pause_Everywhere
 {
     public static class LowResDiff
     {
+        #region 屏幕变化检测相关参数和状态变量
         // ===== 屏幕变化检测（低分辨率差分） =====
         private const int DIFF_W = 64;
         private const int DIFF_H = 36;
@@ -17,7 +18,9 @@ namespace Pause_Everywhere
         private const int DIFF_ENERGY_THRESHOLD = 8000;
 
         // ===== 屏幕变化检测（低分辨率差分） =====
+        #endregion
 
+        #region 低分辨率差分法实现方法 传入bounds，返回真值
         /// <summary>
         /// 低分辨率差分法
         /// </summary>
@@ -84,5 +87,8 @@ namespace Pause_Everywhere
 
             return energy > DIFF_ENERGY_THRESHOLD;
         }
+        #endregion
     }
 }
+
+       
