@@ -4,6 +4,6 @@
              xmlns:local="clr-namespace:Pause_Everywhere"
              StartupUri="Main.xaml">
     <Application.Resources>
-         
+
     </Application.Resources>
 </Application>

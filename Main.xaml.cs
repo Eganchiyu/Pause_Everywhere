@@ -13,8 +13,12 @@ namespace Pause_Everywhere
     {
 
         // ===== 亮度判断参数 =====
-        public const double DIM_OPACITY = 0.25;          // 变暗强度
+        public static double DIM_OPACITY = Properties.Settings.Default.DimOpacity;
+        public static int DIFF_ENERGY_THRESHOLD = Properties.Settings.Default.Threshold;
+        public static bool isMute = Properties.Settings.Default.IsMute;
+        public static bool dim_flag = Properties.Settings.Default.dim_flag;
         public static volatile bool _needDim = false;           // 是否需要变暗
+        private NotifyIcon _trayIcon; // 增加这一行
         // ===== 亮度判断参数 =====
 
 
@@ -29,7 +33,6 @@ namespace Pause_Everywhere
         public static volatile bool _precomputeRunning = true;// 控制后台任务运行
         public static volatile bool WindowIsVisible = false;
         // 差分能量阈值（核心参数）
-        public const int DIFF_ENERGY_THRESHOLD = 20000;
         // ===== 预计算模糊图像相关 =====
 
 
@@ -54,6 +57,7 @@ namespace Pause_Everywhere
             InitializeComponent();
             Debug.WriteLine("注册窗口加载事件");
             Loaded += MainWindow_Loaded;// 窗口加载完成后启动后台任务
+            InitTrayIcon(); // 初始化托盘
         }
 
         // 窗口加载完成事件处理
@@ -63,7 +67,26 @@ namespace Pause_Everywhere
             BGPreCompute.StartBackgroundPrecompute();
         }
 
-        // 
+        // 增加这个方法：用于右键菜单弹出设置
+        private void InitTrayIcon()
+        {
+            _trayIcon = new NotifyIcon();
+            _trayIcon.Icon = System.Drawing.SystemIcons.Application;
+            _trayIcon.Visible = true;
+            _trayIcon.Text = "Pause Everywhere";
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("设置", null, (s, e) => {
+                var sw = new SettingsWindow();
+                sw.Topmost = true; // 确保设置窗口不被全屏遮罩压住
+                sw.Show();
+            });
+            menu.Items.Add("退出", null, (s, e) => {
+                _trayIcon.Dispose();
+                System.Windows.Application.Current.Shutdown();
+            });
+            _trayIcon.ContextMenuStrip = menu;
+        }
 
         #region 初始化 热键注册和获取屏幕区域 添加窗口消息钩子
         protected override void OnSourceInitialized(EventArgs e)

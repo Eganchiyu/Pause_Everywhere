@@ -1,0 +1,908 @@
+
+============================================================
+FILE_PATH: App.xaml
+============================================================
+
+﻿<Application x:Class="Pause_Everywhere.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Pause_Everywhere"
+             StartupUri="Main.xaml">
+    <Application.Resources>
+
+    </Application.Resources>
+</Application>
+
+
+============================================================
+FILE_PATH: App.xaml.cs
+============================================================
+
+﻿using System.Configuration;
+using System.Data;
+using System.Windows;
+
+namespace Pause_Everywhere
+{
+    /// <summary>
+    /// Interaction logic for App.xaml
+    /// </summary>
+    public partial class App : System.Windows.Application
+    {
+    }
+
+}
+
+
+
+============================================================
+FILE_PATH: AssemblyInfo.cs
+============================================================
+
+using System.Windows;
+
+[assembly: ThemeInfo(
+    ResourceDictionaryLocation.None,            //where theme specific resource dictionaries are located
+                                                //(used if a resource is not found in the page,
+                                                // or application resource dictionaries)
+    ResourceDictionaryLocation.SourceAssembly   //where the generic resource dictionary is located
+                                                //(used if a resource is not found in the page,
+                                                // app, or any theme specific resource dictionaries)
+)]
+
+
+
+============================================================
+FILE_PATH: Audio.cs
+============================================================
+
+﻿using System.Runtime.InteropServices;
+
+namespace Pause_Everywhere {
+    [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioEndpointVolume
+    {
+        int RegisterControlChangeNotify(IntPtr pNotify);
+        int UnregisterControlChangeNotify(IntPtr pNotify);
+        int GetChannelCount(out int channelCount);
+        int SetMasterVolumeLevel(float level, Guid eventContext);
+        int SetMasterVolumeLevelScalar(float level, Guid eventContext);
+        int GetMasterVolumeLevel(out float level);
+        int GetMasterVolumeLevelScalar(out float level);
+        int SetChannelVolumeLevel(uint channel, float level, Guid eventContext);
+        int SetChannelVolumeLevelScalar(uint channel, float level, Guid eventContext);
+        int GetChannelVolumeLevel(uint channel, out float level);
+        int GetChannelVolumeLevelScalar(uint channel, out float level);
+        int SetMute([MarshalAs(UnmanagedType.Bool)] bool isMuted, Guid eventContext);
+        int GetMute(out bool isMuted);
+    }
+
+    [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDeviceEnumerator
+    {
+        int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
+        int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
+    }
+
+    [Guid("D666063F-1587-4E43-81F1-B948E807363F"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDevice
+    {
+        int Activate(ref Guid iid, int clsCtx, IntPtr activationParams,
+            [MarshalAs(UnmanagedType.IUnknown)] out object instance);
+    }
+
+    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+    class MMDeviceEnumerator { }
+
+    static class SystemAudio
+    {
+        private static IAudioEndpointVolume? _endpoint;
+
+        /// <summary>
+        ///静态构造函数，用于初始化音频端点音量接口。
+        /// </summary>
+        static SystemAudio()
+        {
+            var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+            enumerator.GetDefaultAudioEndpoint(0, 1, out var device);
+
+            var iid = typeof(IAudioEndpointVolume).GUID;
+            device.Activate(ref iid, 23, IntPtr.Zero, out var obj);
+            _endpoint = (IAudioEndpointVolume)obj;
+        }
+
+        /// <summary>
+        /// 设置系统音频静音状态。
+        /// </summary>
+        /// <param name="mute"></param>
+        public static void SetMute(bool mute)
+        {
+            _endpoint?.SetMute(mute, Guid.Empty);
+        }
+    }
+}
+
+
+
+
+============================================================
+FILE_PATH: BGPreCompute.cs
+============================================================
+
+﻿using OpenCvSharp;
+using System.Diagnostics;
+
+namespace Pause_Everywhere
+{
+    public class BGPreCompute
+    {
+        #region 参数和状态变量
+        // ===== 预计算模糊图像相关 =====
+        public static Mat _preparedMat = new Mat();// 预计算好的模糊图像（OpenCV矩阵）
+        public static readonly object _frameLock = new();// 线程锁，保护_preparedMat的访问
+        public static Task? _precomputeTask;// 后台预计算任务
+        private static volatile bool _needsRecalculation = true;// 标记需要重新计算模糊
+        private const int SKIP_FRAMES = 7;// 跳帧数，降低CPU使用率
+        private static int _frameCounter = 0;
+        // ===== 预计算模糊图像相关 =====
+        #endregion、
+
+        /// <summary>
+        /// 预计算进程主函数
+        /// </summary>
+        /// <remarks>启动异步循环，监控屏幕变化和程序状态，判定是否预计算。</remarks>
+        public static void StartBackgroundPrecompute()
+        {
+            _precomputeTask = Task.Run(async () =>
+            {
+                while (Main._precomputeRunning)
+                {
+                    try
+                    {
+                        // 如果正在处理热键或窗口可见，跳过本次计算
+                        if (Main._isProcessingHotkey || !Main.WindowIsVisible)
+                        {
+                            await Task.Delay(200);
+                            //Debug.WriteLine("跳过预计算：正在处理热键或窗口不可见");
+                            continue;
+                        }
+
+                        var bounds = Main._screenBounds;
+
+                        #region 重新计算模糊图像的条件判断 needsBlur(bool)
+                        /*
+                         * 判断是否需要重新计算模糊图像
+                         * 条件1：标记需要重新计算
+                         * 条件2：屏幕变化检测（低分辨率差分法）
+                         */
+                        //Debug.WriteLine("开始计算...");
+
+                        bool needsBlur = _needsRecalculation || LowResDiff.IsScreenChangedLowRes(bounds);
+                        #endregion
+
+                        // 如果需要，捕获屏幕并计算模糊图像
+                        if (needsBlur)
+                        {
+                            using var mat = Gaussian_processor.Process(CapScreen.Capture(bounds));
+                            lock (_frameLock)
+                            {
+                                _preparedMat?.Dispose();
+                                _preparedMat = mat.Clone();
+                            }
+                            Debug.WriteLine("======最终结果：重新渲染======");
+                            _needsRecalculation = false;
+                        }
+                        else
+                        {
+                            Debug.WriteLine("======最终结果：复用图像======");
+                        }
+
+                        await Task.Delay(100);
+
+                        // 跳帧处理，降低CPU使用率
+                        _frameCounter++;
+                        if (_frameCounter < SKIP_FRAMES)
+                        {
+                            await Task.Delay(100);
+                            continue;
+                        }
+                        _frameCounter = 0;
+                    }
+                    catch
+                    {
+                        Debug.WriteLine("预计算过程中出现异常，继续下一次循环");
+                        await Task.Delay(100);
+                    }
+                }
+            });
+        }
+    }
+
+}
+
+
+
+
+============================================================
+FILE_PATH: CapScreen.cs
+============================================================
+
+﻿using OpenCvSharp;
+using System;
+
+
+namespace Pause_Everywhere
+{
+    public class CapScreen
+    {
+        #region 捕获屏幕区域的方法 传入bounds，返回Mat
+        /// <summary>
+        /// 捕获并处理指定屏幕区域的图像
+        /// </summary>
+        /// <remarks>
+        /// 图像处理包括调整大小、高斯模糊和恢复原尺寸，用于降噪或减少细节。
+        /// 调用方负责在使用完毕后释放返回的<see cref="Mat"/>对象。
+        /// </remarks>
+        /// <param name="bounds">要捕获的屏幕区域（屏幕坐标系）。</param>
+        /// <returns>处理后的图像<see cref="Mat"/>对象。</returns>
+        /// <summary>
+        /// 捕获指定屏幕区域的图像
+        /// </summary>
+        /// <param name="bounds">要捕获的屏幕区域（屏幕坐标系）。</param>
+        /// <returns>捕获的屏幕图像<see cref="Mat"/>对象，调用方负责释放。</returns>
+        public static Mat Capture(Rectangle bounds)
+        {
+            int w = bounds.Width;
+            int h = bounds.Height;
+
+            // 捕获屏幕
+            using var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            using var g = System.Drawing.Graphics.FromImage(bmp);
+            g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, new System.Drawing.Size(w, h));
+
+            // 转换为Mat并返回
+            return OpenCvSharp.Extensions.BitmapConverter.ToMat(bmp);
+        }
+        #endregion
+    }
+}
+
+
+
+============================================================
+FILE_PATH: GaussianProcess.cs
+============================================================
+
+﻿using OpenCvSharp;
+using System;
+using System.Diagnostics;
+using Pause_Everywhere;
+
+public class Gaussian_processor
+{
+    // ===== 屏幕捕获与处理相关 =====
+    private const double SCALE_FACTOR = 0.1;// 缩放因子（缩小10倍处理）
+    public const double BRIGHTNESS_THRESHOLD = 180; // 0~255，越大越“亮”
+    // ===== 屏幕捕获与处理相关 =====
+
+    public static Mat Process(Mat input)
+    {
+        // 转灰度计算平均亮度
+        using var gray = new Mat();
+        Cv2.CvtColor(input, gray, ColorConversionCodes.BGR2GRAY);
+
+        // 计算平均亮度
+        var meanScalar = Cv2.Mean(gray);
+        double avgBrightness = meanScalar.Val0;
+
+        // 更新是否需要变暗
+        Main._needDim = avgBrightness > BRIGHTNESS_THRESHOLD;
+
+        Debug.WriteLine($"平均亮度: {avgBrightness}, 需要变暗: {Main._needDim}");
+
+        // 获取原始尺寸
+        int w = input.Width;
+        int h = input.Height;
+
+        // 计算缩放尺寸
+        int smallW = (int)(w * SCALE_FACTOR);
+        int smallH = (int)(h * SCALE_FACTOR);
+
+        // 处理图像
+        var result = new Mat();
+        Cv2.Resize(input, result, new OpenCvSharp.Size(smallW, smallH));
+        Cv2.GaussianBlur(result, result, new OpenCvSharp.Size(0, 0), 15);
+        Cv2.Resize(result, result, new OpenCvSharp.Size(w, h));
+
+        return result;
+    }
+}
+
+
+
+============================================================
+FILE_PATH: LowResDiff.cs
+============================================================
+
+﻿//使用低分辨率差分法检测屏幕变化
+using System.Diagnostics;
+
+namespace Pause_Everywhere
+{
+    public static class LowResDiff
+    {
+        #region 屏幕变化检测相关参数和状态变量
+        // ===== 屏幕变化检测（低分辨率差分） =====
+        private const int DIFF_W = 64;
+        private const int DIFF_H = 36;
+
+        // 上一帧灰度
+        private static byte[]? _prevGray = null;
+        private static bool _hasPrevGray = false;
+
+        
+
+        // ===== 屏幕变化检测（低分辨率差分） =====
+        #endregion
+
+        #region 低分辨率差分法实现方法 传入bounds，返回真值
+        /// <summary>
+        /// 低分辨率差分法
+        /// </summary>
+        /// <remarks>此方法通过将指定区域缩放到低分辨率并计算灰度值差异，将当前屏幕内容与前一帧进行比较。
+        /// 针对显著变化优化，可以通过更改差分能量阈值<see cref="DIFF_ENERGY_THRESHOLD"/>来修改</remarks>
+        /// <param name="bounds">目标屏幕区域，以屏幕坐标系中的矩形指定。</param>
+        /// <returns>指定边界内是否发生显著变化</returns>
+        public static bool IsScreenChangedLowRes(Rectangle bounds)
+        {
+            // 1. 捕获整屏
+            using var fullBmp = new Bitmap(
+                bounds.Width,
+                bounds.Height,
+                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+
+            using (var g = Graphics.FromImage(fullBmp))
+            {
+                g.CopyFromScreen(
+                    bounds.X, bounds.Y,
+                    0, 0,
+                    bounds.Size,
+                    CopyPixelOperation.SourceCopy);
+            }
+
+            // 2. 缩放到低分辨率
+            using var smallBmp = new Bitmap(
+                DIFF_W, DIFF_H,
+                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+
+            using (var g2 = Graphics.FromImage(smallBmp))
+            {
+                g2.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
+                g2.DrawImage(
+                    fullBmp,
+                    new Rectangle(0, 0, DIFF_W, DIFF_H));
+            }
+
+            // 3. 灰度 + 差分能量
+            var currGray = new byte[DIFF_W * DIFF_H];
+            int energy = 0;
+            int idx = 0;
+
+            for (int y = 0; y < DIFF_H; y++)
+            {
+                for (int x = 0; x < DIFF_W; x++)
+                {
+                    var p = smallBmp.GetPixel(x, y);
+                    byte gval = (byte)((p.R + p.G + p.B) / 3);
+                    currGray[idx] = gval;
+
+                    if (_hasPrevGray)
+                    {
+                        energy += Math.Abs(gval - _prevGray![idx]);
+                    }
+
+                    idx++;
+                }
+            }
+
+            _prevGray = currGray;
+            _hasPrevGray = true;
+
+            Debug.WriteLine($"低分辨率差分能量: {energy}");
+
+            return energy > Main.DIFF_ENERGY_THRESHOLD;
+        }
+        #endregion
+    }
+}
+
+       
+
+
+
+============================================================
+FILE_PATH: Main.xaml
+============================================================
+
+﻿<Window
+    x:Class="Pause_Everywhere.Main"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Pause Everywhere"
+    WindowStyle="None"
+    ResizeMode="NoResize"
+    WindowState="Maximized"
+    Topmost="True"
+    Background="Black"
+    >
+    
+
+    <Grid>
+        <!-- 底层：旧画面，始终不透明 -->
+        <Image x:Name="BackImage"
+           Stretch="Fill"
+           Opacity="1"/>
+
+        <Image x:Name="FrontImage"
+           Stretch="Fill"
+           Opacity="0"/>
+        <Grid>
+            <Image x:Name="BackDrop" Stretch="Fill"/>
+
+            <!-- 变暗遮罩层 -->
+            <Rectangle x:Name="DimLayer"
+               Fill="Black"
+               Opacity="0.25"
+               IsHitTestVisible="False"/>
+        </Grid>
+        <TextBlock
+            Text="PAUSE"
+            Foreground="White"
+            FontSize="96"
+            FontWeight="Bold"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Opacity="0.85"/>
+    </Grid>
+
+</Window>
+
+
+
+============================================================
+FILE_PATH: Main.xaml.cs
+============================================================
+
+﻿using OpenCvSharp;
+using OpenCvSharp.WpfExtensions;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media.Imaging;
+
+
+namespace Pause_Everywhere
+{
+    public partial class Main : System.Windows.Window
+    {
+
+        // ===== 亮度判断参数 =====
+        public static double DIM_OPACITY = Properties.Settings.Default.DimOpacity;
+        public static int DIFF_ENERGY_THRESHOLD = Properties.Settings.Default.Threshold;
+        public static bool isMute = Properties.Settings.Default.IsMute;
+        public static bool dim_flag = Properties.Settings.Default.dim_flag;
+        public static volatile bool _needDim = false;           // 是否需要变暗
+        private NotifyIcon _trayIcon; // 增加这一行
+        // ===== 亮度判断参数 =====
+
+
+        //===== 热键注册相关 =====
+        const int HOTKEY_ID = 1;// 热键ID
+        const uint MOD_CONTROL = 0x0002;// Ctrl键
+        const uint MOD_ALT = 0x0001;// Alt键
+        const uint VK_P = 0x50;// P键
+        //===== 热键注册相关 =====
+
+        // ===== 预计算模糊图像相关 =====
+        public static volatile bool _precomputeRunning = true;// 控制后台任务运行
+        public static volatile bool WindowIsVisible = false;
+        // 差分能量阈值（核心参数）
+        // ===== 预计算模糊图像相关 =====
+
+
+
+        public static Rectangle _screenBounds; // 屏幕区域的缓存
+        public static volatile bool _isProcessingHotkey = false;// 防止热键重复处理
+
+
+
+
+        [DllImport("user32.dll")]
+        static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll")]
+        static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        //初始化阶段
+        public Main()
+        {
+            System.Media.SystemSounds.Beep.Play();
+            Debug.WriteLine("初始化窗口");
+            InitializeComponent();
+            Debug.WriteLine("注册窗口加载事件");
+            Loaded += MainWindow_Loaded;// 窗口加载完成后启动后台任务
+            InitTrayIcon(); // 初始化托盘
+        }
+
+        // 窗口加载完成事件处理
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            Debug.WriteLine("开始运行预渲染主函数");
+            BGPreCompute.StartBackgroundPrecompute();
+        }
+
+        // 增加这个方法：用于右键菜单弹出设置
+        private void InitTrayIcon()
+        {
+            _trayIcon = new NotifyIcon();
+            _trayIcon.Icon = System.Drawing.SystemIcons.Application;
+            _trayIcon.Visible = true;
+            _trayIcon.Text = "Pause Everywhere";
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("设置", null, (s, e) => {
+                var sw = new SettingsWindow();
+                sw.Topmost = true; // 确保设置窗口不被全屏遮罩压住
+                sw.Show();
+            });
+            menu.Items.Add("退出", null, (s, e) => {
+                _trayIcon.Dispose();
+                System.Windows.Application.Current.Shutdown();
+            });
+            _trayIcon.ContextMenuStrip = menu;
+        }
+
+        #region 初始化 热键注册和获取屏幕区域 添加窗口消息钩子
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+
+            var handle = new WindowInteropHelper(this).Handle;
+            RegisterHotKey(handle, HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_P);
+
+            // 获取屏幕区域的初始值的缓存
+            var screen = Screen.FromHandle(handle);
+            _screenBounds = screen.Bounds; 
+
+            HwndSource source = HwndSource.FromHwnd(handle);
+            source.AddHook(WndProc);
+        }
+        #endregion
+
+
+        /// <summary>
+        /// 窗口消息处理主函数，主要处理热键消息以控制窗口显示和更新背景
+        /// </summary>
+        /// <remarks>
+        /// 此方法负责处理Windows消息循环中的WM_HOTKEY热键信息，
+        /// 当检测到指定热键被按下时，会切换窗口的显示状态
+        /// 消息处理后会将handled标志设为true，表示消息已被处理，不需要进一步传递。
+        /// </remarks>
+        /// <param name="hwnd">当前窗口的句柄</param>
+        /// <param name="msg">Windows消息标识符</param>
+        /// <param name="wParam">消息参数，对于热键消息表示热键ID</param>
+        /// <param name="lParam">消息参数，内容取决于消息类型</param>
+        /// <param name="handled">输出参数，指示消息是否已被处理</param>
+        /// <returns>消息处理结果，此方法始终返回IntPtr.Zero</returns>
+        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_HOTKEY = 0x0312; // 热键消息
+            if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID)
+            {
+                _isProcessingHotkey = true;
+                //_needsRecalculation = true; // 标记需要重新计算模糊图像
+
+                Dispatcher.Invoke(() =>
+                {
+                    WindowIsVisible = Visibility == Visibility.Visible;
+                    Debug.WriteLine($"热键触发，当前窗口可见状态：{WindowIsVisible}");
+                    if (!WindowIsVisible)
+                    {
+                        if (_needDim)
+                            DimLayer.Opacity = DIM_OPACITY;
+                        else
+                            DimLayer.Opacity = 0.0;
+
+                        // 立即显示窗口
+                        Visibility = Visibility.Visible;
+                        Activate();
+
+                        // 使用预计算的模糊图像（如果有）
+                        BitmapSource? src = null;
+
+                        // 读取预计算图像时加锁,防止数据竞争
+                        lock (BGPreCompute._frameLock)
+                        {
+                            if (!BGPreCompute._preparedMat.Empty())// 检查预计算图像是否有效
+                            {
+                                src = BGPreCompute._preparedMat.ToBitmapSource(); // 转换为WPF图像
+                            }
+                        }
+
+                        // 如果预计算图像可用，直接使用
+                        if (src != null)
+                        {
+                            src.Freeze();
+                            BackImage.Source = src;// 设置背景图像
+                        }
+
+                        else
+                        {
+                            // 否则实时计算（后备方案）
+                            var handle = new WindowInteropHelper(this).Handle;
+                            var screen = System.Windows.Forms.Screen.FromHandle(handle);
+                            var bounds = screen.Bounds;
+                            using var mat = Gaussian_processor.Process(CapScreen.Capture(bounds));
+                            src = mat.ToBitmapSource();
+                            src.Freeze();
+                            BackImage.Source = src;
+                        }
+                    }
+                    else
+                    {
+                        Debug.WriteLine("隐藏窗口");
+                        Visibility = Visibility.Hidden;
+                    }
+                });
+
+                Task.Delay(300).ContinueWith(_ => _isProcessingHotkey = false);
+                handled = true;
+            }
+            return IntPtr.Zero;
+        }
+
+        #region 窗口关闭清理操作
+        /// <summary>
+        /// 窗口关闭时执行清理操作
+        /// </summary>
+        /// <remarks>
+        /// 窗口关闭时释放资源、注销热键并清理预计算数据
+        /// </remarks>
+        /// <param name="e">包含事件数据的<see cref="EventArgs"/>对象</param>
+        protected override void OnClosed(EventArgs e)
+        {
+            _precomputeRunning = false;
+
+            try { BGPreCompute._precomputeTask?.Wait(500); } catch { }
+
+            var handle = new WindowInteropHelper(this).Handle;
+            UnregisterHotKey(handle, HOTKEY_ID);
+
+            lock (BGPreCompute._frameLock)
+            {
+                BGPreCompute._preparedMat?.Dispose();
+                BGPreCompute._preparedMat = new Mat();
+            }
+
+            base.OnClosed(e);
+        }
+        #endregion
+    }
+}
+
+
+
+============================================================
+FILE_PATH: README.md
+============================================================
+
+# Pause_Everywhere
+
+提供一键式的全局暂停功能，适用于各种应用场景。
+
+## 功能特点
+
+- **全局暂停**：一键暂停所有正在运行的应用程序和进程。
+- **正在开发**：这个项目还在不断优化。
+
+希望这个工具能为用户带来便利，提供信息的隐私保护。
+
+
+
+============================================================
+FILE_PATH: SettingsWindow.xaml
+============================================================
+
+﻿<Window x:Class="Pause_Everywhere.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="设置 - Pause Everywhere" Height="380" Width="420"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        Background="#F9F9F9">
+    <Grid Margin="20">
+        <StackPanel>
+            <TextBlock Text="功能设置" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"/>
+
+            <GroupBox Header="常规" Margin="0,0,0,10" Padding="10">
+                <StackPanel>
+                    <CheckBox x:Name="MuteCheckBox" Content="暂停时自动静音系统音量" Margin="0,5"/>
+                    <CheckBox x:Name="DimCheckBox" Content="环境过亮时自动压暗 (遮罩层)" Margin="0,5"/>
+                </StackPanel>
+            </GroupBox>
+
+            <Expander Header="高级性能参数 (开发者)" Margin="0,5">
+                <StackPanel Margin="10,5,0,0">
+                    <TextBlock Text="屏幕变化检测灵敏度" Foreground="Gray" FontSize="11"/>
+                    <Slider x:Name="ThresholdSlider" Minimum="5000" Maximum="50000" Value="20000" TickFrequency="1000" IsSnapToTickEnabled="True"/>
+
+                    <TextBlock Text="遮罩不透明度" Foreground="Gray" FontSize="11" Margin="0,10,0,0"/>
+                    <Slider x:Name="OpacitySlider" Minimum="0.1" Maximum="0.9" Value="0.25" TickFrequency="0.05" IsSnapToTickEnabled="True"/>
+                </StackPanel>
+            </Expander>
+
+            <Button Content="保存并应用" Click="SaveButton_Click" Margin="0,20,0,0" 
+                    Height="35" Background="#0078D7" Foreground="White" FontWeight="Bold"/>
+        </StackPanel>
+    </Grid>
+</Window>
+
+
+============================================================
+FILE_PATH: SettingsWindow.xaml.cs
+============================================================
+
+﻿using System;
+using System.Windows;
+
+namespace Pause_Everywhere
+{
+    /// <summary>
+    /// SettingsWindow.xaml 的交互逻辑
+    /// </summary>
+    public partial class SettingsWindow : Window
+    {
+        public SettingsWindow()
+        {
+            InitializeComponent();
+
+            // 窗口启动时加载当前保存的配置
+            LoadCurrentSettings();
+        }
+
+        /// <summary>
+        /// 从持久化设置中读取值并显示在 UI 控件上
+        /// </summary>
+        private void LoadCurrentSettings()
+        {
+            try
+            {
+                // 从配置文件读取值并赋给滑动条 (Slider)
+                OpacitySlider.Value = Properties.Settings.Default.DimOpacity;
+                ThresholdSlider.Value = Properties.Settings.Default.Threshold;
+
+                // 从配置文件读取值并赋给复选框 (CheckBox)
+                MuteCheckBox.IsChecked = Properties.Settings.Default.IsMute;
+                DimCheckBox.IsChecked = Properties.Settings.Default.dim_flag;
+            }
+            catch (Exception ex)
+            {
+                // 如果是第一次运行或配置出错，可以使用 Main 中的默认值
+                OpacitySlider.Value = Main.DIM_OPACITY;
+                ThresholdSlider.Value = Main.DIFF_ENERGY_THRESHOLD;
+                MuteCheckBox.IsChecked = true;
+                DimCheckBox.IsChecked = true;
+            }
+        }
+
+        /// <summary>
+        /// 点击保存按钮时的逻辑
+        /// </summary>
+        private void SaveButton_Click(object sender, RoutedEventArgs e)
+        {
+            // 1. 将 UI 控件当前的值写入配置文件（内存快照）
+            Properties.Settings.Default.DimOpacity = OpacitySlider.Value;
+            Properties.Settings.Default.Threshold = (int)ThresholdSlider.Value;
+            Properties.Settings.Default.IsMute = MuteCheckBox.IsChecked ?? true;
+            Properties.Settings.Default.dim_flag = DimCheckBox.IsChecked ?? true;
+
+            // 2. 真正写入硬盘持久化存储
+            Properties.Settings.Default.Save();
+
+            // 3. 同时更新 Main 类中正在运行的静态变量，实现“即时生效”
+            Main.DIM_OPACITY = Properties.Settings.Default.DimOpacity;
+            Main.DIFF_ENERGY_THRESHOLD = Properties.Settings.Default.Threshold;
+            Main.isMute = Properties.Settings.Default.IsMute;
+            Main.dim_flag = Properties.Settings.Default.dim_flag;
+
+            // 4. 提示并关闭窗口
+            System.Windows.MessageBox.Show("配置已更新！", "Pause Everywhere", MessageBoxButton.OK, MessageBoxImage.Information);
+            this.Close();
+        }
+    }
+}
+
+
+============================================================
+FILE_PATH: Properties\Settings.Designer.cs
+============================================================
+
+﻿//------------------------------------------------------------------------------
+// <auto-generated>
+//     此代码由工具生成。
+//     运行时版本:4.0.30319.42000
+//
+//     对此文件的更改可能会导致不正确的行为，并且如果
+//     重新生成代码，这些更改将会丢失。
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+namespace Pause_Everywhere.Properties {
+    
+    
+    [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.Editors.SettingsDesigner.SettingsSingleFileGenerator", "17.14.0.0")]
+    internal sealed partial class Settings : global::System.Configuration.ApplicationSettingsBase {
+        
+        private static Settings defaultInstance = ((Settings)(global::System.Configuration.ApplicationSettingsBase.Synchronized(new Settings())));
+        
+        public static Settings Default {
+            get {
+                return defaultInstance;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("0.25")]
+        public double DimOpacity {
+            get {
+                return ((double)(this["DimOpacity"]));
+            }
+            set {
+                this["DimOpacity"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool dim_flag {
+            get {
+                return ((bool)(this["dim_flag"]));
+            }
+            set {
+                this["dim_flag"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool IsMute {
+            get {
+                return ((bool)(this["IsMute"]));
+            }
+            set {
+                this["IsMute"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("20000")]
+        public int Threshold {
+            get {
+                return ((int)(this["Threshold"]));
+            }
+            set {
+                this["Threshold"] = value;
+            }
+        }
+    }
+}
+
+

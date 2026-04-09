@@ -32,6 +32,7 @@ namespace Pause_Everywhere
                         if (Main._isProcessingHotkey || !Main.WindowIsVisible)
                         {
                             await Task.Delay(200);
+                            //Debug.WriteLine("跳过预计算：正在处理热键或窗口不可见");
                             continue;
                         }
 

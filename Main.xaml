@@ -7,7 +7,9 @@
     ResizeMode="NoResize"
     WindowState="Maximized"
     Topmost="True"
-    Background="Black">
+    Background="Black"
+    >
+    
 
     <Grid>
         <!-- 底层：旧画面，始终不透明 -->
