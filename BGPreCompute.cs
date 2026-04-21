@@ -78,9 +78,10 @@ namespace Pause_Everywhere
                         }
                         _frameCounter = 0;
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        Debug.WriteLine("预计算过程中出现异常，继续下一次循环");
+                        Debug.WriteLine($"预计算过程中出现异常: {ex.Message}");
+                        Debug.WriteLine(ex.StackTrace);
                         await Task.Delay(100);
                     }
                 }
