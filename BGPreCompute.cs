@@ -52,7 +52,8 @@ namespace Pause_Everywhere
                         // 如果需要，捕获屏幕并计算模糊图像
                         if (needsBlur)
                         {
-                            using var mat = Gaussian_processor.Process(CapScreen.Capture(bounds));
+                            using var rawScreenMat = CapScreen.Capture(bounds);
+                            using var mat = Gaussian_processor.Process(rawScreenMat);
                             lock (_frameLock)
                             {
                                 _preparedMat?.Dispose();

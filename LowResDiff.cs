@@ -16,6 +16,13 @@ namespace Pause_Everywhere
 
         
 
+        // 重用对象以减少内存分配
+        private static Bitmap? _reusableFullBmp = null;
+        private static Graphics? _reusableFullGraphics = null;
+        private static Bitmap? _reusableSmallBmp = null;
+        private static Graphics? _reusableSmallGraphics = null;
+        private static Rectangle _lastBounds = Rectangle.Empty;
+
         // ===== 屏幕变化检测（低分辨率差分） =====
         #endregion
 
@@ -29,33 +36,40 @@ namespace Pause_Everywhere
         /// <returns>指定边界内是否发生显著变化</returns>
         public static bool IsScreenChangedLowRes(Rectangle bounds)
         {
-            // 1. 捕获整屏
-            using var fullBmp = new Bitmap(
-                bounds.Width,
-                bounds.Height,
-                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-
-            using (var g = Graphics.FromImage(fullBmp))
+            // 如果屏幕区域发生变化，重新分配复用的资源
+            if (_lastBounds != bounds)
             {
-                g.CopyFromScreen(
-                    bounds.X, bounds.Y,
-                    0, 0,
-                    bounds.Size,
-                    CopyPixelOperation.SourceCopy);
+                _reusableFullGraphics?.Dispose();
+                _reusableFullBmp?.Dispose();
+                _reusableSmallGraphics?.Dispose();
+                _reusableSmallBmp?.Dispose();
+
+                _reusableFullBmp = new Bitmap(
+                    bounds.Width,
+                    bounds.Height,
+                    System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                _reusableFullGraphics = Graphics.FromImage(_reusableFullBmp);
+
+                _reusableSmallBmp = new Bitmap(
+                    DIFF_W, DIFF_H,
+                    System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                _reusableSmallGraphics = Graphics.FromImage(_reusableSmallBmp);
+                _reusableSmallGraphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
+
+                _lastBounds = bounds;
             }
+
+            // 1. 捕获整屏
+            _reusableFullGraphics!.CopyFromScreen(
+                bounds.X, bounds.Y,
+                0, 0,
+                bounds.Size,
+                CopyPixelOperation.SourceCopy);
 
             // 2. 缩放到低分辨率
-            using var smallBmp = new Bitmap(
-                DIFF_W, DIFF_H,
-                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-
-            using (var g2 = Graphics.FromImage(smallBmp))
-            {
-                g2.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
-                g2.DrawImage(
-                    fullBmp,
-                    new Rectangle(0, 0, DIFF_W, DIFF_H));
-            }
+            _reusableSmallGraphics!.DrawImage(
+                _reusableFullBmp!,
+                new Rectangle(0, 0, DIFF_W, DIFF_H));
 
             // 3. 灰度 + 差分能量
             var currGray = new byte[DIFF_W * DIFF_H];
@@ -66,7 +80,7 @@ namespace Pause_Everywhere
             {
                 for (int x = 0; x < DIFF_W; x++)
                 {
-                    var p = smallBmp.GetPixel(x, y);
+                    var p = _reusableSmallBmp!.GetPixel(x, y);
                     byte gval = (byte)((p.R + p.G + p.B) / 3);
                     currGray[idx] = gval;
 
