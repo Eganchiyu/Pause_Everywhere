@@ -76,9 +76,11 @@ namespace Pause_Everywhere
             int energy = 0;
             int idx = 0;
 
-            for (int y = 0; y < DIFF_H; y++)
+            var rect = new Rectangle(0, 0, DIFF_W, DIFF_H);
+            var data = smallBmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, smallBmp.PixelFormat);
+            try
             {
-                for (int x = 0; x < DIFF_W; x++)
+                unsafe
                 {
                     var p = _reusableSmallBmp!.GetPixel(x, y);
                     byte gval = (byte)((p.R + p.G + p.B) / 3);
@@ -86,11 +88,30 @@ namespace Pause_Everywhere
 
                     if (_hasPrevGray)
                     {
-                        energy += Math.Abs(gval - _prevGray![idx]);
-                    }
+                        byte* row = ptr + (y * data.Stride);
+                        for (int x = 0; x < DIFF_W; x++)
+                        {
+                            // Format24bppRgb is BGR order
+                            byte b = row[x * 3];
+                            byte g = row[x * 3 + 1];
+                            byte r = row[x * 3 + 2];
 
-                    idx++;
+                            byte gval = (byte)((r + g + b) / 3);
+                            currGray[idx] = gval;
+
+                            if (_hasPrevGray)
+                            {
+                                energy += Math.Abs(gval - _prevGray![idx]);
+                            }
+
+                            idx++;
+                        }
+                    }
                 }
+            }
+            finally
+            {
+                smallBmp.UnlockBits(data);
             }
 
             _prevGray = currGray;
