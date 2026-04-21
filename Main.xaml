@@ -8,6 +8,8 @@
     WindowState="Maximized"
     Topmost="True"
     Background="Black"
+    AllowsTransparency="True"
+    Opacity="0"
     >
     
 

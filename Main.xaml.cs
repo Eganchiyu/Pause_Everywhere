@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
-
+using System.Windows.Media.Animation;
 
 namespace Pause_Everywhere
 {
@@ -173,11 +173,19 @@ namespace Pause_Everywhere
                             src.Freeze();
                             BackImage.Source = src;
                         }
+
+                        // 淡入动画
+                        Visibility = Visibility.Visible; // 确保在淡入前是可见的
+                        DoubleAnimation fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200));
+                        this.BeginAnimation(System.Windows.Window.OpacityProperty, fadeIn);
                     }
                     else
                     {
                         Debug.WriteLine("隐藏窗口");
-                        Visibility = Visibility.Hidden;
+                        // 淡出动画
+                        DoubleAnimation fadeOut = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(200));
+                        fadeOut.Completed += (s, e) => { Visibility = Visibility.Hidden; };
+                        this.BeginAnimation(System.Windows.Window.OpacityProperty, fadeOut);
                     }
                 });
 
