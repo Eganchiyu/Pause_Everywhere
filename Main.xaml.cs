@@ -177,7 +177,7 @@ namespace Pause_Everywhere
                         // 淡入动画
                         Visibility = Visibility.Visible; // 确保在淡入前是可见的
                         DoubleAnimation fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200));
-                        this.BeginAnimation(Window.OpacityProperty, fadeIn);
+                        this.BeginAnimation(System.Windows.Window.OpacityProperty, fadeIn);
                     }
                     else
                     {
@@ -185,7 +185,7 @@ namespace Pause_Everywhere
                         // 淡出动画
                         DoubleAnimation fadeOut = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(200));
                         fadeOut.Completed += (s, e) => { Visibility = Visibility.Hidden; };
-                        this.BeginAnimation(Window.OpacityProperty, fadeOut);
+                        this.BeginAnimation(System.Windows.Window.OpacityProperty, fadeOut);
                     }
                 });
 
