@@ -1,5 +1,7 @@
-﻿//使用低分辨率差分法检测屏幕变化
+﻿using System;
 using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
 
 namespace Pause_Everywhere
 {
@@ -13,8 +15,6 @@ namespace Pause_Everywhere
         // 上一帧灰度
         private static byte[]? _prevGray = null;
         private static bool _hasPrevGray = false;
-
-        
 
         // 重用对象以减少内存分配
         private static Bitmap? _reusableFullBmp = null;
@@ -30,8 +30,7 @@ namespace Pause_Everywhere
         /// <summary>
         /// 低分辨率差分法
         /// </summary>
-        /// <remarks>此方法通过将指定区域缩放到低分辨率并计算灰度值差异，将当前屏幕内容与前一帧进行比较。
-        /// 针对显著变化优化，可以通过更改差分能量阈值<see cref="DIFF_ENERGY_THRESHOLD"/>来修改</remarks>
+        /// <remarks>此方法通过将指定区域缩放到低分辨率并计算灰度值差异，将当前屏幕内容与前一帧进行比较。</remarks>
         /// <param name="bounds">目标屏幕区域，以屏幕坐标系中的矩形指定。</param>
         /// <returns>指定边界内是否发生显著变化</returns>
         public static bool IsScreenChangedLowRes(Rectangle bounds)
@@ -47,12 +46,12 @@ namespace Pause_Everywhere
                 _reusableFullBmp = new Bitmap(
                     bounds.Width,
                     bounds.Height,
-                    System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                    PixelFormat.Format24bppRgb);
                 _reusableFullGraphics = Graphics.FromImage(_reusableFullBmp);
 
                 _reusableSmallBmp = new Bitmap(
                     DIFF_W, DIFF_H,
-                    System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                    PixelFormat.Format24bppRgb);
                 _reusableSmallGraphics = Graphics.FromImage(_reusableSmallBmp);
                 _reusableSmallGraphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
 
@@ -71,34 +70,39 @@ namespace Pause_Everywhere
                 _reusableFullBmp!,
                 new Rectangle(0, 0, DIFF_W, DIFF_H));
 
-            // 3. 灰度 + 差分能量
+            // 3. 灰度 + 差分能量 (使用传统指针高效遍历)
             var currGray = new byte[DIFF_W * DIFF_H];
             int energy = 0;
             int idx = 0;
 
             var rect = new Rectangle(0, 0, DIFF_W, DIFF_H);
-            var data = smallBmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, smallBmp.PixelFormat);
+            var data = _reusableSmallBmp!.LockBits(rect, ImageLockMode.ReadOnly, _reusableSmallBmp.PixelFormat);
+            
             try
             {
                 unsafe
                 {
-                    var p = _reusableSmallBmp!.GetPixel(x, y);
-                    byte gval = (byte)((p.R + p.G + p.B) / 3);
-                    currGray[idx] = gval;
-
-                    if (_hasPrevGray)
+                    // 获取图像首地址指针
+                    byte* ptr = (byte*)data.Scan0;
+                    
+                    // 经典的双层 for 循环遍历像素
+                    for (int y = 0; y < DIFF_H; y++)
                     {
+                        // 计算当前行的起始内存地址，必须乘以 Stride（字节对齐后的行宽）
                         byte* row = ptr + (y * data.Stride);
+                        
                         for (int x = 0; x < DIFF_W; x++)
                         {
-                            // Format24bppRgb is BGR order
+                            // Format24bppRgb 格式在内存中是 B G R 倒序排列的
                             byte b = row[x * 3];
                             byte g = row[x * 3 + 1];
                             byte r = row[x * 3 + 2];
 
+                            // 简单求平均得到灰度值
                             byte gval = (byte)((r + g + b) / 3);
                             currGray[idx] = gval;
 
+                            // 如果有上一帧的数据，计算能量差
                             if (_hasPrevGray)
                             {
                                 energy += Math.Abs(gval - _prevGray![idx]);
@@ -111,7 +115,8 @@ namespace Pause_Everywhere
             }
             finally
             {
-                smallBmp.UnlockBits(data);
+                // 确保无论如何都会解锁内存
+                _reusableSmallBmp.UnlockBits(data);
             }
 
             _prevGray = currGray;
@@ -119,10 +124,9 @@ namespace Pause_Everywhere
 
             Debug.WriteLine($"低分辨率差分能量: {energy}");
 
+            // 请确保你的 Main 类中定义了 DIFF_ENERGY_THRESHOLD 这个公开的常量或静态变量
             return energy > Main.DIFF_ENERGY_THRESHOLD;
         }
         #endregion
     }
 }
-
-       
