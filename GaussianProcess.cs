@@ -34,10 +34,14 @@ public class Gaussian_processor
         int smallH = (int)(h * SCALE_FACTOR);
 
         // 处理图像
+        using var smallMat = new Mat();
+        Cv2.Resize(input, smallMat, new OpenCvSharp.Size(smallW, smallH));
+
+        using var blurredMat = new Mat();
+        Cv2.GaussianBlur(smallMat, blurredMat, new OpenCvSharp.Size(0, 0), 15);
+
         var result = new Mat();
-        Cv2.Resize(input, result, new OpenCvSharp.Size(smallW, smallH));
-        Cv2.GaussianBlur(result, result, new OpenCvSharp.Size(0, 0), 15);
-        Cv2.Resize(result, result, new OpenCvSharp.Size(w, h));
+        Cv2.Resize(blurredMat, result, new OpenCvSharp.Size(w, h));
 
         return result;
     }
