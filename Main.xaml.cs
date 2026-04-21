@@ -168,7 +168,8 @@ namespace Pause_Everywhere
                             var handle = new WindowInteropHelper(this).Handle;
                             var screen = System.Windows.Forms.Screen.FromHandle(handle);
                             var bounds = screen.Bounds;
-                            using var mat = Gaussian_processor.Process(CapScreen.Capture(bounds));
+                            using var rawMat = CapScreen.Capture(bounds);
+                            using var mat = Gaussian_processor.Process(rawMat);
                             src = mat.ToBitmapSource();
                             src.Freeze();
                             BackImage.Source = src;
