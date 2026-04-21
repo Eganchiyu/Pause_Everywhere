@@ -207,7 +207,7 @@ namespace Pause_Everywhere
         {
             _precomputeRunning = false;
 
-            try { BGPreCompute._precomputeTask?.Wait(500); } catch { }
+            try { BGPreCompute._precomputeTask?.Wait(500); } catch (Exception ex) { Debug.WriteLine($"清理预计算任务时出现异常: {ex.Message}"); }
 
             var handle = new WindowInteropHelper(this).Handle;
             UnregisterHotKey(handle, HOTKEY_ID);
