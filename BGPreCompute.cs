@@ -13,6 +13,7 @@ namespace Pause_Everywhere
         private static volatile bool _needsRecalculation = true;// 标记需要重新计算模糊
         private const int SKIP_FRAMES = 7;// 跳帧数，降低CPU使用率
         private static int _frameCounter = 0;
+        private static bool _hasInitialComputed = false;// 是否已经完成了启动时的初次计算
         // ===== 预计算模糊图像相关 =====
         #endregion、
 
@@ -28,13 +29,15 @@ namespace Pause_Everywhere
                 {
                     try
                     {
-                        // 如果正在处理热键或窗口可见，跳过本次计算
-                        if (Main._isProcessingHotkey || !Main.WindowIsVisible)
+                        // 如果正在处理热键，或者（窗口不可见并且已经完成了初次计算），跳过本次计算
+                        if (Main._isProcessingHotkey || (!Main.WindowIsVisible && _hasInitialComputed))
                         {
                             await Task.Delay(200);
                             //Debug.WriteLine("跳过预计算：正在处理热键或窗口不可见");
                             continue;
                         }
+
+                        _hasInitialComputed = true;
 
                         var bounds = Main._screenBounds;
 
