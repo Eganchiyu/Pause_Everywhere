@@ -49,6 +49,22 @@ namespace Pause_Everywhere
         [DllImport("user32.dll")]
         static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+        [DllImport("user32.dll")]
+        static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, nuint dwExtraInfo);
+        const byte VK_MEDIA_PLAY_PAUSE = 0xB3;
+        const uint KEYEVENTF_KEYUP = 0x0002;
+
+        private static readonly string[] _workMessages = new string[]
+        {
+            "PAUSE",
+            "正在编译代码...",
+            "系统更新中...",
+            "同步服务器数据...",
+            "正在重建索引...",
+            "部署环境初始化..."
+        };
+        private Random _random = new Random();
+
         //初始化阶段
         public Main()
         {
@@ -175,14 +191,37 @@ namespace Pause_Everywhere
                             BackImage.Source = src;
                         }
 
-                        // 淡入动画
-                        Visibility = Visibility.Visible; // 确保在淡入前是可见的
-                        DoubleAnimation fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200));
-                        this.BeginAnimation(System.Windows.Window.OpacityProperty, fadeIn);
+                        // 设置随机文本
+                        StatusText.Text = _workMessages[_random.Next(_workMessages.Length)];
+
+                        // 处理音视频暂停
+                        keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 0, 0);
+                        keybd_event(VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_KEYUP, 0);
+
+                        // 处理静音
+                        if (isMute)
+                        {
+                            SystemAudio.SetMute(true);
+                        }
+
+                        // 立即显示，无淡入
+                        this.BeginAnimation(System.Windows.Window.OpacityProperty, null);
+                        Opacity = 1;
+                        Visibility = Visibility.Visible;
                     }
                     else
                     {
                         Debug.WriteLine("隐藏窗口");
+                        // 恢复音视频播放
+                        keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 0, 0);
+                        keybd_event(VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_KEYUP, 0);
+
+                        // 恢复声音
+                        if (isMute)
+                        {
+                            SystemAudio.SetMute(false);
+                        }
+
                         // 淡出动画
                         DoubleAnimation fadeOut = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(200));
                         fadeOut.Completed += (s, e) => { Visibility = Visibility.Hidden; };

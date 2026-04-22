@@ -3,10 +3,14 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="设置 - Pause Everywhere" Height="380" Width="420"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
-        Background="#F9F9F9">
+        Background="#F0F4F8">
     <Grid Margin="20">
+        <Border CornerRadius="8" Background="White" Padding="20">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.1"/>
+            </Border.Effect>
         <StackPanel>
-            <TextBlock Text="功能设置" FontSize="22" FontWeight="Bold" Margin="0,0,0,15"/>
+            <TextBlock Text="功能设置" FontSize="22" FontWeight="Bold" Margin="0,0,0,15" Foreground="#333333"/>
 
             <GroupBox Header="常规" Margin="0,0,0,10" Padding="10">
                 <StackPanel>
@@ -26,7 +30,14 @@
             </Expander>
 
             <Button Content="保存并应用" Click="SaveButton_Click" Margin="0,20,0,0" 
-                    Height="35" Background="#0078D7" Foreground="White" FontWeight="Bold"/>
+                    Height="35" Background="#0078D7" Foreground="White" FontWeight="Bold" BorderThickness="0">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="5"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
         </StackPanel>
+        </Border>
     </Grid>
 </Window>

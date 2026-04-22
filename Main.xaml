@@ -9,7 +9,8 @@
     Topmost="True"
     Background="Black"
     AllowsTransparency="True"
-    Opacity="0"
+    Opacity="1"
+    Visibility="Hidden"
     >
     
 
@@ -31,7 +32,7 @@
                Opacity="0.25"
                IsHitTestVisible="False"/>
         </Grid>
-        <TextBlock
+        <TextBlock x:Name="StatusText"
             Text="PAUSE"
             Foreground="White"
             FontSize="96"
