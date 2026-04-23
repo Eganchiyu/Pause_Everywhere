@@ -204,6 +204,53 @@ namespace Pause_Everywhere
                             SystemAudio.SetMute(true);
                         }
 
+                        // 播放启动音效
+                        CustomAudioPlayer.PlayStartSound();
+
+                        // 应用自定义图像覆盖 (老板键)
+                        if (Properties.Settings.Default.EnableImageOverlay && !string.IsNullOrEmpty(Properties.Settings.Default.ImagePath) && System.IO.File.Exists(Properties.Settings.Default.ImagePath))
+                        {
+                            try
+                            {
+                                var bmp = new BitmapImage(new Uri(Properties.Settings.Default.ImagePath));
+                                OverlayImage.Source = bmp;
+                                OverlayImage.Opacity = Properties.Settings.Default.ImageOpacity;
+                                OverlayImage.Stretch = (System.Windows.Media.Stretch)Properties.Settings.Default.ImageFillMode;
+                                OverlayImage.Visibility = Visibility.Visible;
+                            }
+                            catch { OverlayImage.Visibility = Visibility.Hidden; }
+                        }
+                        else
+                        {
+                            OverlayImage.Visibility = Visibility.Hidden;
+                        }
+
+                        // 应用自定义文字显示
+                        if (Properties.Settings.Default.EnableTextOverlay)
+                        {
+                            StatusText.Text = Properties.Settings.Default.OverlayText;
+                            StatusText.FontSize = Properties.Settings.Default.TextFontSize;
+                            try
+                            {
+                                StatusText.Foreground = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(Properties.Settings.Default.TextColor));
+                            }
+                            catch { }
+                            StatusText.Visibility = Visibility.Visible;
+                        }
+                        else
+                        {
+                            // 如果不启用文字覆盖，并且也没有启用图像覆盖，则显示默认的随机工作消息
+                            if (!Properties.Settings.Default.EnableImageOverlay)
+                            {
+                                StatusText.Text = _workMessages[_random.Next(_workMessages.Length)];
+                                StatusText.Visibility = Visibility.Visible;
+                            }
+                            else
+                            {
+                                StatusText.Visibility = Visibility.Hidden;
+                            }
+                        }
+
                         // 立即显示，无淡入
                         this.BeginAnimation(System.Windows.Window.OpacityProperty, null);
                         Opacity = 1;
@@ -221,6 +268,9 @@ namespace Pause_Everywhere
                         {
                             SystemAudio.SetMute(false);
                         }
+
+                        // 播放结束音效
+                        CustomAudioPlayer.PlayEndSound();
 
                         // 淡出动画
                         DoubleAnimation fadeOut = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(200));
