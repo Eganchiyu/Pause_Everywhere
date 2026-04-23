@@ -1,4 +1,4 @@
-﻿<Window
+<Window
     x:Class="Pause_Everywhere.Main"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -13,16 +13,12 @@
     Visibility="Hidden"
     >
     
-
     <Grid>
         <!-- 底层：旧画面，始终不透明 -->
-        <Image x:Name="BackImage"
-           Stretch="Fill"
-           Opacity="1"/>
+        <Image x:Name="BackImage" Stretch="Fill" Opacity="1"/>
 
-        <Image x:Name="FrontImage"
-           Stretch="Fill"
-           Opacity="0"/>
+        <Image x:Name="FrontImage" Stretch="Fill" Opacity="0"/>
+
         <Grid>
             <Image x:Name="BackDrop" Stretch="Fill"/>
 
@@ -32,6 +28,10 @@
                Opacity="0.25"
                IsHitTestVisible="False"/>
         </Grid>
+
+        <!-- 自定义图像覆盖 (老板键) -->
+        <Image x:Name="OverlayImage" Stretch="Uniform" Opacity="1" Visibility="Hidden" IsHitTestVisible="False"/>
+
         <TextBlock x:Name="StatusText"
             Text="PAUSE"
             Foreground="White"
@@ -39,7 +39,11 @@
             FontWeight="Bold"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
-            Opacity="0.85"/>
+            Opacity="0.85">
+            <TextBlock.Effect>
+                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.8" Color="Black"/>
+            </TextBlock.Effect>
+        </TextBlock>
     </Grid>
 
 </Window>

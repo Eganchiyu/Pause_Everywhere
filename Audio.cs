@@ -65,5 +65,39 @@ namespace Pause_Everywhere {
             _endpoint?.SetMute(mute, Guid.Empty);
         }
     }
+
+    public static class CustomAudioPlayer
+    {
+        private static System.Windows.Media.MediaPlayer? _startPlayer;
+        private static System.Windows.Media.MediaPlayer? _endPlayer;
+
+        public static void PlayStartSound()
+        {
+            if (Properties.Settings.Default.EnableStartSound && !string.IsNullOrEmpty(Properties.Settings.Default.StartSoundPath) && System.IO.File.Exists(Properties.Settings.Default.StartSoundPath))
+            {
+                try
+                {
+                    if (_startPlayer == null) _startPlayer = new System.Windows.Media.MediaPlayer();
+                    _startPlayer.Open(new Uri(Properties.Settings.Default.StartSoundPath));
+                    _startPlayer.Play();
+                }
+                catch { }
+            }
+        }
+
+        public static void PlayEndSound()
+        {
+            if (Properties.Settings.Default.EnableEndSound && !string.IsNullOrEmpty(Properties.Settings.Default.EndSoundPath) && System.IO.File.Exists(Properties.Settings.Default.EndSoundPath))
+            {
+                try
+                {
+                    if (_endPlayer == null) _endPlayer = new System.Windows.Media.MediaPlayer();
+                    _endPlayer.Open(new Uri(Properties.Settings.Default.EndSoundPath));
+                    _endPlayer.Play();
+                }
+                catch { }
+            }
+        }
+    }
 }
 
