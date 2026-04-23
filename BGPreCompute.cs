@@ -56,7 +56,10 @@ namespace Pause_Everywhere
                         if (needsBlur)
                         {
                             using var rawScreenMat = CapScreen.Capture(bounds);
-                            using var mat = Gaussian_processor.Process(rawScreenMat);
+
+                            // 【修改这里】把原来的 Process 改为 ProcessBaseBlur
+                            using var mat = Gaussian_processor.ProcessBaseBlur(rawScreenMat);
+
                             lock (_frameLock)
                             {
                                 _preparedMat?.Dispose();
@@ -69,9 +72,8 @@ namespace Pause_Everywhere
                         {
                             Debug.WriteLine("======最终结果：复用图像======");
                         }
-
                         await Task.Delay(100);
-
+                        
                         // 跳帧处理，降低CPU使用率
                         _frameCounter++;
                         if (_frameCounter < SKIP_FRAMES)

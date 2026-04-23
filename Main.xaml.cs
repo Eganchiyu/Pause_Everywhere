@@ -4,8 +4,9 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
-using System.Windows.Media.Imaging;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace Pause_Everywhere
 {
@@ -41,7 +42,9 @@ namespace Pause_Everywhere
         public static volatile bool _isProcessingHotkey = false;// 防止热键重复处理
 
 
-
+        // 在类顶部添加这两个变量
+        private DispatcherTimer _dynamicEffectTimer;
+        private Mat _baseBlurredMat; // 缓存干净的模糊底图
 
         [DllImport("user32.dll")]
         static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -71,16 +74,34 @@ namespace Pause_Everywhere
             System.Media.SystemSounds.Beep.Play();
             Debug.WriteLine("初始化窗口");
             InitializeComponent();
-            Debug.WriteLine("注册窗口加载事件");
-            Loaded += MainWindow_Loaded;// 窗口加载完成后启动后台任务
-            InitTrayIcon(); // 初始化托盘
-        }
-
-        // 窗口加载完成事件处理
-        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
-        {
+            var helper = new WindowInteropHelper(this);
+            helper.EnsureHandle();
             Debug.WriteLine("开始运行预渲染主函数");
             BGPreCompute.StartBackgroundPrecompute();
+            InitTrayIcon();
+            _dynamicEffectTimer = new System.Windows.Threading.DispatcherTimer();
+            _dynamicEffectTimer.Interval = TimeSpan.FromMilliseconds(33); // 约 30 FPS
+            _dynamicEffectTimer.Tick += DynamicEffectTimer_Tick;
+        }
+
+        // 2. 添加定时器 Tick 事件
+        private void DynamicEffectTimer_Tick(object sender, EventArgs e)
+        {
+            // 如果没有底图或者没有开启特效，直接跳过
+            if (_baseBlurredMat == null || _baseBlurredMat.Empty() || !Properties.Settings.Default.EnableAdvancedEffects)
+                return;
+
+            // 拿到当前特效类型
+            int effectType = Properties.Settings.Default.EffectType;
+
+            // 应用动态特效 (每一帧随机生成)
+            using var frameMat = Gaussian_processor.ApplyDynamicEffects(_baseBlurredMat, effectType);
+
+            // 转换为 WPF 图像
+            var src = frameMat.ToBitmapSource();
+            src.Freeze(); // 【内存泄漏警告】WPF 跨线程或高频刷新必须 Freeze，否则内存直接爆炸
+
+            BackImage.Source = src;
         }
 
         // 增加这个方法：用于右键菜单弹出设置
@@ -156,8 +177,8 @@ namespace Pause_Everywhere
                             DimLayer.Opacity = 0.0;
 
                         // 立即显示窗口
-                        Visibility = Visibility.Visible;
-                        Activate();
+                        this.Show();
+                        this.Activate();
 
                         // 使用预计算的模糊图像（如果有）
                         BitmapSource? src = null;
@@ -165,30 +186,36 @@ namespace Pause_Everywhere
                         // 读取预计算图像时加锁,防止数据竞争
                         lock (BGPreCompute._frameLock)
                         {
-                            if (!BGPreCompute._preparedMat.Empty())// 检查预计算图像是否有效
+                            if (!BGPreCompute._preparedMat.Empty())
                             {
-                                src = BGPreCompute._preparedMat.ToBitmapSource(); // 转换为WPF图像
+                                // 复用预计算好的底图
+                                _baseBlurredMat?.Dispose(); // 释放上一次的
+                                _baseBlurredMat = BGPreCompute._preparedMat.Clone();
                             }
                         }
 
-                        // 如果预计算图像可用，直接使用
-                        if (src != null)
+                        if (_baseBlurredMat == null || _baseBlurredMat.Empty())
                         {
-                            src.Freeze();
-                            BackImage.Source = src;// 设置背景图像
+                            // 如果预计算没准备好，实时捕获并只做一次模糊
+                            var handle2 = new WindowInteropHelper(this).Handle;
+                            var screen = System.Windows.Forms.Screen.FromHandle(handle2);
+                            using var rawMat = CapScreen.Capture(screen.Bounds);
+                            _baseBlurredMat = Gaussian_processor.ProcessBaseBlur(rawMat);
                         }
 
+                        // 【2. 判断是否启动 30FPS 动态循环】
+                        if (Properties.Settings.Default.EnableAdvancedEffects && Properties.Settings.Default.EffectType != 0)
+                        {
+                            // 开启了动态特效 (CRT或Glitch)，启动定时器
+                            _dynamicEffectTimer.Start();
+                        }
                         else
                         {
-                            // 否则实时计算（后备方案）
-                            var handle = new WindowInteropHelper(this).Handle;
-                            var screen = System.Windows.Forms.Screen.FromHandle(handle);
-                            var bounds = screen.Bounds;
-                            using var rawMat = CapScreen.Capture(bounds);
-                            using var mat = Gaussian_processor.Process(rawMat);
-                            src = mat.ToBitmapSource();
-                            src.Freeze();
-                            BackImage.Source = src;
+                            // 没开高级特效，或者只是灰度化（静态），就只渲染一帧
+                            using var staticMat = Gaussian_processor.ApplyDynamicEffects(_baseBlurredMat, Properties.Settings.Default.EffectType);
+                            var staticSrc = staticMat.ToBitmapSource();
+                            staticSrc.Freeze();
+                            BackImage.Source = staticSrc;
                         }
 
                         // 设置随机文本
@@ -258,6 +285,7 @@ namespace Pause_Everywhere
                     }
                     else
                     {
+                        _dynamicEffectTimer.Stop();
                         Debug.WriteLine("隐藏窗口");
                         // 恢复音视频播放
                         keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 0, 0);

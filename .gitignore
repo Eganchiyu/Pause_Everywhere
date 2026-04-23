@@ -9,7 +9,7 @@
 *.user
 *.userosscache
 *.sln.docstates
-
+project_for_ai.txt
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
