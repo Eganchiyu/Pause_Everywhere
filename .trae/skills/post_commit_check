@@ -1,0 +1,227 @@
+# Post Commit Check Skill
+
+## 描述
+在每次 git commit 后自动执行一系列检查，确保代码质量和文档同步。
+
+## 触发条件
+- 执行 `git commit` 命令后
+- 执行 `git push` 命令前
+
+## 检查项目
+
+### 1. Gitignore 检查
+检查以下内容是否被正确忽略：
+```
+- bin/ 和 obj/ 目录
+- .vs/ 和 .idea/ 目录
+- *.user 文件
+- *.tmp 和 *.log 文件
+- 敏感信息文件
+```
+
+**检查方法**:
+```bash
+# 检查是否有不应提交的文件被暂存
+git diff --cached --name-only | grep -E '\.(user|tmp|log|pfx)$'
+git diff --cached --name-only | grep -E '^(bin|obj|\.vs|\.idea)/'
+```
+
+### 2. 风格审查
+检查代码是否符合项目规范：
+
+**C# 代码检查**:
+- 文件命名：PascalCase
+- 类命名：PascalCase
+- 私有字段：`_` 前缀
+- 常量：UPPER_SNAKE_CASE
+- 注释：公共 API 必须有 XML 文档注释
+
+**XAML 检查**:
+- 控件命名：camelCase
+- 属性格式：对齐整齐
+- 命名空间：正确引入
+
+**检查方法**:
+```bash
+# 检查新增的 C# 文件命名
+git diff --cached --name-only --diff-filter=A | grep '\.cs$' | while read file; do
+  basename "$file" | grep -P '^[A-Z][a-zA-Z0-9]*\.cs$' || echo "警告: $file 命名不符合 PascalCase"
+done
+```
+
+### 3. 命名方式检查
+确保命名符合项目规范：
+
+**检查规则**:
+- 类名：PascalCase
+- 方法名：PascalCase
+- 变量名：camelCase
+- 常量：UPPER_SNAKE_CASE
+- 私有字段：`_` 前缀
+
+**检查方法**:
+```bash
+# 检查 C# 代码中的命名规范
+git diff --cached -U0 | grep -E '^\+.*(class|interface|enum|struct)\s+' | grep -Pv '^\+.*(class|interface|enum|struct)\s+[A-Z][a-zA-Z0-9]*'
+```
+
+### 4. README 同步检查
+检查 README.md 是否需要更新：
+
+**检查内容**:
+- 新增功能是否在 README 中说明
+- 安装步骤是否需要更新
+- 使用说明是否完整
+- 截图是否需要更新
+
+**检查方法**:
+```bash
+# 检查是否有功能相关文件变更但 README 未更新
+changed_files=$(git diff --cached --name-only)
+if echo "$changed_files" | grep -qE '\.(cs|xaml)$'; then
+  if ! echo "$changed_files" | grep -q 'README.md'; then
+    echo "警告: 代码文件已变更，但 README.md 未更新"
+  fi
+fi
+```
+
+### 5. CHANGELOG 同步检查
+检查 CHANGELOG.md 是否需要更新：
+
+**检查内容**:
+- 新增功能是否记录
+- Bug 修复是否记录
+- 重大变更是否记录
+- 版本号是否更新
+
+**检查方法**:
+```bash
+# 检查是否有功能或修复相关提交但 CHANGELOG 未更新
+commit_msg=$(git log -1 --pretty=%B)
+if echo "$commit_msg" | grep -qE '^(feat|fix):'; then
+  if ! git diff --cached --name-only | grep -q 'CHANGELOG.md'; then
+    echo "警告: 本次提交包含功能或修复，但 CHANGELOG.md 未更新"
+  fi
+fi
+```
+
+### 6. 文档同步检查
+检查 `docs/` 目录下的文档是否需要更新：
+
+**检查内容**:
+- 架构文档是否与代码同步
+- 开发日志是否记录本次变更
+- 开发规划是否需要调整
+
+**检查方法**:
+```bash
+# 检查是否有模块结构变更但架构文档未更新
+if git diff --cached --name-only | grep -qE '^(Main|Audio|BGPreCompute|CapScreen|GaussianProcess|LowResDiff|SettingsWindow)\.'; then
+  if ! git diff --cached --name-only | grep -q 'docs/architecture.md'; then
+    echo "警告: 核心模块已变更，但 docs/architecture.md 未更新"
+  fi
+fi
+```
+
+## 输出格式
+
+检查结果使用以下格式输出：
+
+```
+=====================================
+  Post Commit Check 结果
+=====================================
+
+[✓] Gitignore 检查: 通过
+[✓] 风格审查: 通过
+[!] 命名方式: 发现 2 个警告
+    - Main.xaml.cs: 私有字段未使用 _ 前缀
+    - Audio.cs: 常量未使用 UPPER_SNAKE_CASE
+[✓] README 同步: 通过
+[!] CHANGELOG 同步: 未更新
+[!] 文档同步: docs/architecture.md 需要更新
+
+=====================================
+  检查完成: 3 个警告, 0 个错误
+=====================================
+```
+
+## 操作建议
+
+根据检查结果，提供以下建议：
+
+1. **警告**: 提示开发者注意，但不阻止提交
+2. **错误**: 必须修复后才能提交
+3. **建议**: 提供改进方向
+
+## 集成方式
+
+### 方式 1: Git Hook
+在 `.git/hooks/post-commit` 中添加检查脚本。
+
+### 方式 2: CI/CD 集成
+在 GitHub Actions 或其他 CI 工具中添加检查步骤。
+
+### 方式 3: 手动执行
+提供脚本供开发者手动运行检查。
+
+---
+
+## 附录：完整检查脚本
+
+```bash
+#!/bin/bash
+# post-commit-check.sh
+
+echo "====================================="
+echo "  Post Commit Check 结果"
+echo "====================================="
+
+errors=0
+warnings=0
+
+# 1. Gitignore 检查
+echo ""
+echo "[检查] Gitignore..."
+if git diff --cached --name-only | grep -qE '\.(user|tmp|log|pfx)$'; then
+  echo "[!] 发现不应提交的文件"
+  ((warnings++))
+else
+  echo "[✓] 通过"
+fi
+
+# 2. 风格审查
+echo ""
+echo "[检查] 风格审查..."
+# 添加具体检查逻辑
+
+# 3. 命名方式检查
+echo ""
+echo "[检查] 命名方式..."
+# 添加具体检查逻辑
+
+# 4. README 同步检查
+echo ""
+echo "[检查] README 同步..."
+# 添加具体检查逻辑
+
+# 5. CHANGELOG 同步检查
+echo ""
+echo "[检查] CHANGELOG 同步..."
+# 添加具体检查逻辑
+
+# 6. 文档同步检查
+echo ""
+echo "[检查] 文档同步..."
+# 添加具体检查逻辑
+
+# 输出总结
+echo ""
+echo "====================================="
+echo "  检查完成: $warnings 个警告, $errors 个错误"
+echo "====================================="
+
+if [ $errors -gt 0 ]; then
+  exit 1
+fi
+```
